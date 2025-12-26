@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Heebo', system-ui, -apple-system, sans-serif;
+  background-color: #f4f7fa;
+  color: #1e293b;
+  line-height: 1.5;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+a:hover {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* Override Tailwind resets for sidebar */
+.sidebar a,
+.sidebar button,
+.sidebar span,
+.sidebar div {
+  color: inherit;
+}
+
+.quick-actions a,
+.quick-actions span {
+  color: #ffffff !important;
+}

@@ -1,0 +1,377 @@
+'use client'
+
+import { useState, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { 
+  Music, Upload, Search, Trash2, Loader2, 
+  FileText, Check, X, Download, RefreshCw
+} from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+import { toast } from 'sonner'
+
+type Song = {
+  id: string
+  title: string
+  artist: string | null
+  album: string | null
+  bpm: number | null
+  key: string | null
+  duration: string | null
+  genre: string | null
+  date_added: string | null
+}
+
+type Props = {
+  songs: Song[]
+  totalCount: number
+}
+
+export default function SongsContent({ songs: initialSongs, totalCount }: Props) {
+  const router = useRouter()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [songs, setSongs] = useState(initialSongs)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [deleting, setDeleting] = useState<string | null>(null)
+
+  const filteredSongs = songs.filter(song => {
+    const query = searchQuery.toLowerCase()
+    return !query || 
+      song.title.toLowerCase().includes(query) ||
+      song.artist?.toLowerCase().includes(query)
+  })
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setImporting(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/songs/import', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Import failed')
+      }
+
+      toast.success(result.message)
+      router.refresh()
+      
+      // Reload songs
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('songs')
+        .select('*')
+        .order('title')
+      
+      if (data) setSongs(data)
+      
+    } catch (error) {
+      console.error('Import error:', error)
+      toast.error(error instanceof Error ? error.message : 'שגיאה בייבוא')
+    } finally {
+      setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('למחוק את השיר?')) return
+    
+    setDeleting(id)
+    try {
+      const supabase = createClient()
+      await supabase.from('songs').delete().eq('id', id)
+      setSongs(songs.filter(s => s.id !== id))
+      toast.success('השיר נמחק')
+    } catch (error) {
+      toast.error('שגיאה במחיקה')
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  const handleDeleteAll = async () => {
+    if (!confirm('למחוק את כל השירים? פעולה זו לא ניתנת לביטול!')) return
+    
+    setImporting(true)
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      await supabase.from('songs').delete().eq('user_id', user.id)
+      setSongs([])
+      toast.success('כל השירים נמחקו')
+    } catch (error) {
+      toast.error('שגיאה במחיקה')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        marginBottom: '24px',
+      }}>
+        <div>
+          <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+            ספריית שירים
+          </h1>
+          <p style={{ fontSize: '14px', color: '#64748b', marginTop: '4px' }}>
+            {totalCount} שירים בספרייה
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px' }}>
+          {songs.length > 0 && (
+            <button
+              onClick={handleDeleteAll}
+              disabled={importing}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '10px 16px',
+                background: '#fff',
+                border: '1px solid #fecaca',
+                borderRadius: '8px',
+                color: '#ef4444',
+                fontSize: '14px',
+                cursor: 'pointer',
+              }}
+            >
+              <Trash2 size={16} />
+              מחק הכל
+            </button>
+          )}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 20px',
+              background: '#0ea5e9',
+              border: 'none',
+              borderRadius: '8px',
+              color: '#fff',
+              fontSize: '14px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              opacity: importing ? 0.7 : 1,
+            }}
+          >
+            {importing ? (
+              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+            ) : (
+              <Upload size={18} />
+            )}
+            {importing ? 'מייבא...' : 'ייבא מ-Rekordbox'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.xml"
+            onChange={handleImport}
+            style={{ display: 'none' }}
+          />
+        </div>
+      </div>
+
+      {/* Instructions Card */}
+      {songs.length === 0 && (
+        <div style={{
+          background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+          border: '1px solid #bae6fd',
+          borderRadius: '16px',
+          padding: '32px',
+          marginBottom: '24px',
+          textAlign: 'center',
+        }}>
+          <div style={{
+            width: '64px',
+            height: '64px',
+            borderRadius: '16px',
+            background: '#0ea5e9',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 16px',
+          }}>
+            <Music size={32} color="#fff" />
+          </div>
+          <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#0f172a', margin: '0 0 8px' }}>
+            ייבא את ספריית השירים שלך
+          </h2>
+          <p style={{ fontSize: '14px', color: '#64748b', margin: '0 0 24px', maxWidth: '400px', marginInline: 'auto' }}>
+            ייצא את הפלייליסט מ-Rekordbox כקובץ טקסט והעלה אותו כאן
+          </p>
+          
+          <div style={{
+            background: '#fff',
+            borderRadius: '12px',
+            padding: '20px',
+            textAlign: 'right',
+            maxWidth: '500px',
+            margin: '0 auto',
+          }}>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a', marginBottom: '12px' }}>
+              איך לייצא מ-Rekordbox:
+            </div>
+            <ol style={{ 
+              fontSize: '13px', 
+              color: '#64748b', 
+              margin: 0, 
+              paddingRight: '20px',
+              lineHeight: 1.8,
+            }}>
+              <li>פתח את Rekordbox</li>
+              <li>בחר את הפלייליסט או כל השירים</li>
+              <li>לחץ ימני → Export → Export to File</li>
+              <li>שמור כקובץ .txt</li>
+              <li>העלה את הקובץ כאן</li>
+            </ol>
+          </div>
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '14px 28px',
+              background: '#0ea5e9',
+              border: 'none',
+              borderRadius: '10px',
+              color: '#fff',
+              fontSize: '15px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              marginTop: '24px',
+            }}
+          >
+            <Upload size={20} />
+            בחר קובץ לייבוא
+          </button>
+        </div>
+      )}
+
+      {/* Search */}
+      {songs.length > 0 && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ position: 'relative', maxWidth: '400px' }}>
+            <Search 
+              size={18} 
+              color="#94a3b8" 
+              style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)' }} 
+            />
+            <input
+              type="text"
+              placeholder="חיפוש שיר או אמן..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '10px 40px 10px 12px',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+                fontSize: '14px',
+                outline: 'none',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Songs Table */}
+      {songs.length > 0 && (
+        <div style={{
+          background: '#fff',
+          borderRadius: '12px',
+          border: '1px solid #e9eef4',
+          overflow: 'hidden',
+        }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e9eef4' }}>
+                <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>שיר</th>
+                <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>אמן</th>
+                <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>BPM</th>
+                <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Key</th>
+                <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>ז׳אנר</th>
+                <th style={{ padding: '12px 16px', width: '50px' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredSongs.map(song => (
+                <tr key={song.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                  <td style={{ padding: '12px 16px', fontSize: '14px', color: '#0f172a', fontWeight: 500 }}>
+                    {song.title}
+                  </td>
+                  <td style={{ padding: '12px 16px', fontSize: '14px', color: '#64748b' }}>
+                    {song.artist || '-'}
+                  </td>
+                  <td style={{ padding: '12px 16px', fontSize: '14px', color: '#64748b', textAlign: 'center' }}>
+                    {song.bpm ? Math.round(song.bpm) : '-'}
+                  </td>
+                  <td style={{ padding: '12px 16px', fontSize: '14px', color: '#64748b', textAlign: 'center' }}>
+                    {song.key || '-'}
+                  </td>
+                  <td style={{ padding: '12px 16px', fontSize: '13px', color: '#94a3b8' }}>
+                    {song.genre || '-'}
+                  </td>
+                  <td style={{ padding: '12px 16px' }}>
+                    <button
+                      onClick={() => handleDelete(song.id)}
+                      disabled={deleting === song.id}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#94a3b8',
+                        cursor: 'pointer',
+                        padding: '4px',
+                      }}
+                    >
+                      {deleting === song.id ? (
+                        <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                      ) : (
+                        <Trash2 size={16} />
+                      )}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          
+          {filteredSongs.length === 0 && (
+            <div style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
+              לא נמצאו שירים
+            </div>
+          )}
+        </div>
+      )}
+
+      <style jsx global>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+  )
+}
