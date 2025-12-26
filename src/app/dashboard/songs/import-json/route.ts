@@ -30,26 +30,46 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No songs provided' }, { status: 400 })
     }
 
-    // Insert songs one by one to handle duplicates gracefully
+    // Add user_id to all songs
+    const songsWithUser = songs.map(song => ({
+      user_id: user.id,
+      ...song,
+    }))
+
+    // Batch insert (100 at a time) with upsert to handle duplicates
+    const BATCH_SIZE = 100
     let imported = 0
     let skipped = 0
     
-    for (const song of songs) {
-      const { error } = await supabase
+    for (let i = 0; i < songsWithUser.length; i += BATCH_SIZE) {
+      const batch = songsWithUser.slice(i, i + BATCH_SIZE)
+      
+      const { data, error } = await supabase
         .from('songs')
-        .insert({
-          user_id: user.id,
-          ...song,
+        .upsert(batch, { 
+          onConflict: 'user_id,title,artist',
+          ignoreDuplicates: true 
         })
+        .select('id')
       
       if (error) {
-        if (error.code === '23505') {
-          skipped++
-        } else {
-          console.error('Error inserting song:', error, song)
+        console.error('Batch insert error:', error)
+        // Try one by one for this batch
+        for (const song of batch) {
+          const { error: singleError } = await supabase
+            .from('songs')
+            .insert(song)
+          
+          if (singleError) {
+            if (singleError.code === '23505') {
+              skipped++
+            }
+          } else {
+            imported++
+          }
         }
       } else {
-        imported++
+        imported += batch.length
       }
     }
 

@@ -107,11 +107,15 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
     return songs
   }
 
+  const [importProgress, setImportProgress] = useState<string | null>(null)
+
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     setImporting(true)
+    setImportProgress('קורא קובץ...')
+    
     try {
       const text = await file.text()
       const fileName = file.name.toLowerCase()
@@ -120,6 +124,7 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       
       // Parse XML in browser
       if (fileName.endsWith('.xml') || text.trim().startsWith('<?xml')) {
+        setImportProgress('מנתח שירים...')
         parsedSongs = parseXMLInBrowser(text)
       } else {
         // For TXT files, still send to server (small files)
@@ -154,20 +159,33 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
         throw new Error('לא נמצאו שירים בקובץ')
       }
 
-      // Send parsed songs as JSON
-      const response = await fetch('/api/songs/import-json', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ songs: parsedSongs }),
-      })
+      // Send in chunks of 500 songs
+      const CHUNK_SIZE = 500
+      let totalImported = 0
+      let totalSkipped = 0
+      
+      for (let i = 0; i < parsedSongs.length; i += CHUNK_SIZE) {
+        const chunk = parsedSongs.slice(i, i + CHUNK_SIZE)
+        const progress = Math.min(i + CHUNK_SIZE, parsedSongs.length)
+        setImportProgress(`מייבא ${progress} / ${parsedSongs.length} שירים...`)
+        
+        const response = await fetch('/api/songs/import-json', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ songs: chunk }),
+        })
 
-      const result = await response.json()
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Import failed')
+        if (!response.ok) {
+          const result = await response.json()
+          throw new Error(result.error || 'Import failed')
+        }
+        
+        const result = await response.json()
+        totalImported += result.imported || 0
+        totalSkipped += result.skipped || 0
       }
 
-      toast.success(result.message)
+      toast.success(`${totalImported} שירים יובאו בהצלחה!${totalSkipped > 0 ? ` (${totalSkipped} כפילויות דולגו)` : ''}`)
       router.refresh()
       
       // Reload songs
@@ -184,6 +202,7 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       toast.error(error instanceof Error ? error.message : 'שגיאה בייבוא')
     } finally {
       setImporting(false)
+      setImportProgress(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -286,7 +305,7 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
             ) : (
               <Upload size={18} />
             )}
-            {importing ? 'מייבא...' : 'ייבא מ-Rekordbox'}
+            {importing ? (importProgress || 'מייבא...') : 'ייבא מ-Rekordbox'}
           </button>
           <input
             ref={fileInputRef}
