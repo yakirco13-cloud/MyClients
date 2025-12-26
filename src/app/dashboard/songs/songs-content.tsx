@@ -41,18 +41,124 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       song.artist?.toLowerCase().includes(query)
   })
 
+  // Parse XML in browser
+  const parseXMLInBrowser = (text: string) => {
+    const parser = new DOMParser()
+    const xml = parser.parseFromString(text, 'text/xml')
+    const tracks = xml.querySelectorAll('TRACK')
+    const songs: Array<{
+      title: string
+      artist: string | null
+      album: string | null
+      bpm: number | null
+      key: string | null
+      duration: string | null
+      genre: string | null
+      rating: number | null
+      date_added: string | null
+      rekordbox_id: string | null
+      location: string | null
+    }> = []
+
+    tracks.forEach(track => {
+      const title = track.getAttribute('Name')?.trim()
+      if (!title) return
+
+      // Skip short WAV samples
+      const kind = track.getAttribute('Kind') || ''
+      const totalTime = parseInt(track.getAttribute('TotalTime') || '0')
+      if (kind === 'WAV File' && totalTime < 30) return
+
+      const bpmStr = track.getAttribute('AverageBpm')
+      const bpm = bpmStr ? parseFloat(bpmStr) : null
+      const ratingStr = track.getAttribute('Rating')
+      const rating = ratingStr ? parseInt(ratingStr) : null
+
+      // Get and decode location
+      let location = track.getAttribute('Location')
+      if (location) {
+        try {
+          location = decodeURIComponent(location).replace(/^file:\/\/localhost\//, '')
+        } catch (e) {}
+      }
+
+      // Format duration
+      const formatDuration = (secs: number) => {
+        const mins = Math.floor(secs / 60)
+        const s = secs % 60
+        return `${mins}:${s.toString().padStart(2, '0')}`
+      }
+
+      songs.push({
+        title,
+        artist: track.getAttribute('Artist')?.trim() || null,
+        album: track.getAttribute('Album')?.trim() || null,
+        bpm: bpm && bpm > 0 ? bpm : null,
+        key: track.getAttribute('Tonality')?.trim() || null,
+        duration: totalTime > 0 ? formatDuration(totalTime) : null,
+        genre: track.getAttribute('Genre')?.trim() || null,
+        rating: rating && rating > 0 ? rating : null,
+        date_added: track.getAttribute('DateAdded') || null,
+        rekordbox_id: track.getAttribute('TrackID') || null,
+        location,
+      })
+    })
+
+    return songs
+  }
+
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     setImporting(true)
     try {
-      const formData = new FormData()
-      formData.append('file', file)
+      const text = await file.text()
+      const fileName = file.name.toLowerCase()
+      
+      let parsedSongs
+      
+      // Parse XML in browser
+      if (fileName.endsWith('.xml') || text.trim().startsWith('<?xml')) {
+        parsedSongs = parseXMLInBrowser(text)
+      } else {
+        // For TXT files, still send to server (small files)
+        const formData = new FormData()
+        formData.append('file', file)
 
-      const response = await fetch('/api/songs/import', {
+        const response = await fetch('/api/songs/import', {
+          method: 'POST',
+          body: formData,
+        })
+
+        const result = await response.json()
+
+        if (!response.ok) {
+          throw new Error(result.error || 'Import failed')
+        }
+
+        toast.success(result.message)
+        router.refresh()
+        
+        const supabase = createClient()
+        const { data } = await supabase
+          .from('songs')
+          .select('*')
+          .order('title')
+        
+        if (data) setSongs(data)
+        return
+      }
+
+      if (parsedSongs.length === 0) {
+        throw new Error('לא נמצאו שירים בקובץ')
+      }
+
+      // Send parsed songs as JSON
+      const response = await fetch('/api/songs/import-json', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ songs: parsedSongs }),
       })
 
       const result = await response.json()
