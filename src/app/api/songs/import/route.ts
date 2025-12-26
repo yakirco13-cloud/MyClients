@@ -28,7 +28,19 @@ function parseXML(text: string): Array<{
   rekordbox_id: string | null
   location: string | null
 }> {
-  const songs = []
+  const songs: Array<{
+    title: string
+    artist: string | null
+    album: string | null
+    bpm: number | null
+    key: string | null
+    duration: string | null
+    genre: string | null
+    rating: number | null
+    date_added: string | null
+    rekordbox_id: string | null
+    location: string | null
+  }> = []
   
   // Simple regex-based XML parsing for TRACK elements
   const trackRegex = /<TRACK\s+([^>]+)>/g
@@ -108,7 +120,19 @@ function parseTXT(text: string): Array<{
   rekordbox_id: string | null
   location: string | null
 }> {
-  const songs = []
+  const songs: Array<{
+    title: string
+    artist: string | null
+    album: string | null
+    bpm: number | null
+    key: string | null
+    duration: string | null
+    genre: string | null
+    rating: number | null
+    date_added: string | null
+    rekordbox_id: string | null
+    location: string | null
+  }> = []
   const lines = text.split('\n').filter(line => line.trim())
   
   if (lines.length < 2) return songs
