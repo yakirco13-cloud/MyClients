@@ -3,10 +3,24 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Search, Plus, Phone, Mail, Calendar, MapPin, MoreVertical, Edit, Trash2, Eye, Users } from 'lucide-react'
+import { Plus, Users, Eye, Edit, Trash2, MoreVertical } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import { Button, EmptyState, TableRowSkeleton } from '@/components/ui/custom-ui'
+import { 
+  StatCard, 
+  StatsGrid, 
+  FilterBar, 
+  DataTable, 
+  AvatarCell, 
+  BadgeCell,
+  EmptyState,
+  Modal,
+  FormField,
+  FormGrid,
+  FormActions,
+  Button,
+  type Column
+} from '@/components/shared'
 
 type Client = {
   id: string
@@ -26,6 +40,29 @@ type Props = {
   clients: Client[]
 }
 
+// Color rotation for avatars
+const colors = ['#3b82f6', '#eab308', '#10b981', '#8b5cf6', '#f97316']
+const bgColors = ['#eff6ff', '#fefce8', '#ecfdf5', '#f5f3ff', '#fff7ed']
+
+// Status helpers
+const getStatusVariant = (status: string): 'success' | 'info' | 'error' | 'default' => {
+  switch (status) {
+    case 'active': return 'success'
+    case 'completed': return 'info'
+    case 'cancelled': return 'error'
+    default: return 'default'
+  }
+}
+
+const getStatusLabel = (status: string) => {
+  switch (status) {
+    case 'active': return 'פעיל'
+    case 'completed': return 'הושלם'
+    case 'cancelled': return 'בוטל'
+    default: return status
+  }
+}
+
 export default function ClientsContent({ clients: initialClients }: Props) {
   const router = useRouter()
   const [clients, setClients] = useState(initialClients)
@@ -33,7 +70,6 @@ export default function ClientsContent({ clients: initialClients }: Props) {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [showAddModal, setShowAddModal] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState<string | null>(null)
 
   const filteredClients = clients.filter(client => {
     const matchesSearch = client.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -49,7 +85,6 @@ export default function ClientsContent({ clients: initialClients }: Props) {
   const handleDelete = async (id: string) => {
     if (!confirm('האם למחוק לקוח זה?')) return
     
-    setDeleting(id)
     try {
       const supabase = createClient()
       const { error } = await supabase.from('clients').delete().eq('id', id)
@@ -61,30 +96,7 @@ export default function ClientsContent({ clients: initialClients }: Props) {
     } catch (error) {
       toast.error('שגיאה במחיקת הלקוח')
     } finally {
-      setDeleting(null)
       setMenuOpen(null)
-    }
-  }
-
-  const getStatusStyle = (status: string) => {
-    switch (status) {
-      case 'active':
-        return { background: '#ecfdf5', color: '#10b981' }
-      case 'completed':
-        return { background: '#eff6ff', color: '#3b82f6' }
-      case 'cancelled':
-        return { background: '#fef2f2', color: '#ef4444' }
-      default:
-        return { background: '#f1f5f9', color: '#64748b' }
-    }
-  }
-
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'active': return 'פעיל'
-      case 'completed': return 'הושלם'
-      case 'cancelled': return 'בוטל'
-      default: return status
     }
   }
 
@@ -94,155 +106,130 @@ export default function ClientsContent({ clients: initialClients }: Props) {
     completed: clients.filter(c => c.status === 'completed').length,
   }
 
+  // Table columns
+  const columns: Column<Client>[] = [
+    {
+      key: 'client',
+      header: 'לקוח',
+      width: '2fr',
+      render: (client, index) => (
+        <AvatarCell
+          name={client.name + (client.partner_name ? ` & ${client.partner_name}` : '')}
+          subtitle={client.email || undefined}
+          color={colors[index % 5]}
+          bgColor={bgColors[index % 5]}
+        />
+      ),
+    },
+    {
+      key: 'phone',
+      header: 'טלפון',
+      width: '1fr',
+      render: (client) => (
+        <span style={{ color: '#64748b', direction: 'ltr', display: 'block', textAlign: 'right' }}>
+          {client.phone || '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'event_date',
+      header: 'תאריך אירוע',
+      width: '1fr',
+      render: (client) => (
+        <span style={{ color: '#64748b' }}>
+          {client.event_date ? new Date(client.event_date).toLocaleDateString('he-IL') : '-'}
+        </span>
+      ),
+    },
+    {
+      key: 'venue',
+      header: 'מיקום',
+      width: '1fr',
+      render: (client) => (
+        <span style={{ color: '#64748b' }}>{client.venue_name || '-'}</span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'סטטוס',
+      width: '100px',
+      render: (client) => (
+        <BadgeCell label={getStatusLabel(client.status)} variant={getStatusVariant(client.status)} />
+      ),
+    },
+    {
+      key: 'actions',
+      header: '',
+      width: '60px',
+      render: (client) => (
+        <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={() => setMenuOpen(menuOpen === client.id ? null : client.id)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '8px',
+              borderRadius: '6px',
+            }}
+          >
+            <MoreVertical size={18} color="#64748b" />
+          </button>
+          
+          {menuOpen === client.id && (
+            <DropdownMenu
+              clientId={client.id}
+              onDelete={() => handleDelete(client.id)}
+              onClose={() => setMenuOpen(null)}
+            />
+          )}
+        </div>
+      ),
+    },
+  ]
+
   return (
     <div>
-      {/* Stats Row */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: '20px',
-        marginBottom: '28px',
-      }}>
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e9eef4',
-        }}>
-          <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px' }}>סה״כ לקוחות</div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#0f172a' }}>{stats.total}</div>
-        </div>
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e9eef4',
-        }}>
-          <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px' }}>לקוחות פעילים</div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#10b981' }}>{stats.active}</div>
-        </div>
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e9eef4',
-        }}>
-          <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px' }}>אירועים שהושלמו</div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#3b82f6' }}>{stats.completed}</div>
-        </div>
-      </div>
+      {/* Stats */}
+      <StatsGrid columns={3}>
+        <StatCard label="סה״כ לקוחות" value={stats.total} />
+        <StatCard label="לקוחות פעילים" value={stats.active} valueColor="#10b981" />
+        <StatCard label="אירועים שהושלמו" value={stats.completed} valueColor="#3b82f6" />
+      </StatsGrid>
 
-      {/* Filters Row */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '24px',
-        gap: '16px',
-      }}>
-        {/* Search */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          background: '#fff',
-          border: '1px solid #e9eef4',
-          borderRadius: '10px',
-          padding: '12px 16px',
-          flex: 1,
-          maxWidth: '400px',
-        }}>
-          <Search size={20} color="#94a3b8" />
-          <input
-            type="text"
-            placeholder="חיפוש לקוחות..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              border: 'none',
-              outline: 'none',
-              width: '100%',
-              fontSize: '14px',
-              background: 'transparent',
-            }}
-          />
-        </div>
-
-        {/* Filter & Add */}
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            style={{
-              padding: '12px 16px',
-              borderRadius: '10px',
-              border: '1px solid #e9eef4',
-              background: '#fff',
-              fontSize: '14px',
-              color: '#1e293b',
-              cursor: 'pointer',
-            }}
-          >
-            <option value="all">כל הסטטוסים</option>
-            <option value="active">פעיל</option>
-            <option value="completed">הושלם</option>
-            <option value="cancelled">בוטל</option>
-          </select>
-
-          <button
-            onClick={() => setShowAddModal(true)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '12px 20px',
-              borderRadius: '10px',
-              background: '#0ea5e9',
-              color: '#fff',
-              border: 'none',
-              fontSize: '14px',
-              fontWeight: 500,
-              cursor: 'pointer',
-            }}
-          >
-            <Plus size={18} />
+      {/* Filters */}
+      <FilterBar
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="חיפוש לקוחות..."
+        filters={[
+          {
+            value: statusFilter,
+            onChange: setStatusFilter,
+            options: [
+              { value: 'all', label: 'כל הסטטוסים' },
+              { value: 'active', label: 'פעיל' },
+              { value: 'completed', label: 'הושלם' },
+              { value: 'cancelled', label: 'בוטל' },
+            ],
+          },
+        ]}
+        actions={
+          <Button icon={<Plus size={18} />} onClick={() => setShowAddModal(true)}>
             לקוח חדש
-          </button>
-        </div>
-      </div>
+          </Button>
+        }
+      />
 
-      {/* Clients Table */}
-      <div style={{
-        background: '#fff',
-        borderRadius: '16px',
-        border: '1px solid #e9eef4',
-        overflow: 'hidden',
-      }}>
-        {/* Table Header */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '2fr 1fr 1fr 1fr 100px 60px',
-          padding: '16px 24px',
-          background: '#f8fafc',
-          borderBottom: '1px solid #e9eef4',
-          fontSize: '12px',
-          fontWeight: 600,
-          color: '#64748b',
-          textTransform: 'uppercase',
-          letterSpacing: '0.5px',
-        }}>
-          <div>לקוח</div>
-          <div>טלפון</div>
-          <div>תאריך אירוע</div>
-          <div>מיקום</div>
-          <div>סטטוס</div>
-          <div></div>
-        </div>
-
-        {/* Table Body */}
-        {filteredClients.length === 0 ? (
+      {/* Table */}
+      <DataTable
+        columns={columns}
+        data={filteredClients}
+        keyExtractor={(client) => client.id}
+        onRowClick={(client) => router.push(`/dashboard/clients/${client.id}`)}
+        emptyState={
           <EmptyState
-            icon={<Users size={32} />}
+            icon={<Users size={48} />}
             title={searchQuery || statusFilter !== 'all' ? 'לא נמצאו לקוחות' : 'אין לקוחות עדיין'}
             description={searchQuery || statusFilter !== 'all' ? 'נסה לשנות את החיפוש או הפילטר' : 'הוסף את הלקוח הראשון שלך כדי להתחיל'}
             action={!searchQuery && statusFilter === 'all' ? {
@@ -250,181 +237,101 @@ export default function ClientsContent({ clients: initialClients }: Props) {
               onClick: () => setShowAddModal(true)
             } : undefined}
           />
-        ) : (
-          filteredClients.map((client, i) => {
-            const colors = ['#3b82f6', '#eab308', '#10b981', '#8b5cf6', '#f97316']
-            const bgs = ['#eff6ff', '#fefce8', '#ecfdf5', '#f5f3ff', '#fff7ed']
-            
-            return (
-              <div
-                key={client.id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '2fr 1fr 1fr 1fr 100px 60px',
-                  padding: '18px 24px',
-                  borderBottom: '1px solid #f1f5f9',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  transition: 'background 0.15s',
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#f8fafc'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                onClick={() => router.push(`/dashboard/clients/${client.id}`)}
-              >
-                {/* Client Name */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                  <div style={{
-                    width: '44px',
-                    height: '44px',
-                    borderRadius: '10px',
-                    background: bgs[i % 5],
-                    color: colors[i % 5],
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 700,
-                    fontSize: '16px',
-                  }}>
-                    {client.name.charAt(0)}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '14px', fontWeight: 500, color: '#1e293b' }}>
-                      {client.name}{client.partner_name && ` & ${client.partner_name}`}
-                    </div>
-                    {client.email && (
-                      <div style={{ fontSize: '12px', color: '#94a3b8' }}>{client.email}</div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Phone */}
-                <div style={{ fontSize: '14px', color: '#64748b', direction: 'ltr', textAlign: 'right' }}>
-                  {client.phone || '-'}
-                </div>
-
-                {/* Event Date */}
-                <div style={{ fontSize: '14px', color: '#64748b' }}>
-                  {client.event_date ? new Date(client.event_date).toLocaleDateString('he-IL') : '-'}
-                </div>
-
-                {/* Venue */}
-                <div style={{ fontSize: '14px', color: '#64748b' }}>
-                  {client.venue_name || '-'}
-                </div>
-
-                {/* Status */}
-                <div>
-                  <span style={{
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    ...getStatusStyle(client.status),
-                  }}>
-                    {getStatusLabel(client.status)}
-                  </span>
-                </div>
-
-                {/* Actions */}
-                <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-                  <button
-                    onClick={() => setMenuOpen(menuOpen === client.id ? null : client.id)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      padding: '8px',
-                      borderRadius: '6px',
-                    }}
-                  >
-                    <MoreVertical size={18} color="#64748b" />
-                  </button>
-                  
-                  {menuOpen === client.id && (
-                    <div style={{
-                      position: 'absolute',
-                      left: 0,
-                      top: '100%',
-                      background: '#fff',
-                      borderRadius: '10px',
-                      boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-                      border: '1px solid #e9eef4',
-                      zIndex: 10,
-                      minWidth: '150px',
-                      overflow: 'hidden',
-                    }}>
-                      <Link
-                        href={`/dashboard/clients/${client.id}`}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px',
-                          padding: '12px 16px',
-                          fontSize: '14px',
-                          color: '#1e293b',
-                          textDecoration: 'none',
-                        }}
-                      >
-                        <Eye size={16} />
-                        צפייה
-                      </Link>
-                      <Link
-                        href={`/dashboard/clients/${client.id}?edit=true`}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px',
-                          padding: '12px 16px',
-                          fontSize: '14px',
-                          color: '#1e293b',
-                          textDecoration: 'none',
-                        }}
-                      >
-                        <Edit size={16} />
-                        עריכה
-                      </Link>
-                      <button
-                        onClick={() => handleDelete(client.id)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px',
-                          padding: '12px 16px',
-                          fontSize: '14px',
-                          color: '#ef4444',
-                          background: 'none',
-                          border: 'none',
-                          width: '100%',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <Trash2 size={16} />
-                        מחיקה
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })
-        )}
-      </div>
+        }
+      />
 
       {/* Add Client Modal */}
-      {showAddModal && (
-        <AddClientModal 
-          onClose={() => setShowAddModal(false)} 
-          onSuccess={(newClient) => {
-            setClients([newClient, ...clients])
-            setShowAddModal(false)
-          }} 
-        />
-      )}
+      <AddClientModal 
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)} 
+        onSuccess={(newClient) => {
+          setClients([newClient, ...clients])
+          setShowAddModal(false)
+        }} 
+      />
     </div>
   )
 }
 
-function AddClientModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: (client: Client) => void }) {
+// Dropdown Menu Component
+function DropdownMenu({ clientId, onDelete, onClose }: { 
+  clientId: string
+  onDelete: () => void
+  onClose: () => void 
+}) {
+  return (
+    <div style={{
+      position: 'absolute',
+      left: 0,
+      top: '100%',
+      background: '#fff',
+      borderRadius: '10px',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+      border: '1px solid #e9eef4',
+      zIndex: 10,
+      minWidth: '150px',
+      overflow: 'hidden',
+    }}>
+      <Link
+        href={`/dashboard/clients/${clientId}`}
+        onClick={onClose}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '12px 16px',
+          fontSize: '14px',
+          color: '#1e293b',
+          textDecoration: 'none',
+        }}
+      >
+        <Eye size={16} />
+        צפייה
+      </Link>
+      <Link
+        href={`/dashboard/clients/${clientId}?edit=true`}
+        onClick={onClose}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '12px 16px',
+          fontSize: '14px',
+          color: '#1e293b',
+          textDecoration: 'none',
+        }}
+      >
+        <Edit size={16} />
+        עריכה
+      </Link>
+      <button
+        onClick={onDelete}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '12px 16px',
+          fontSize: '14px',
+          color: '#ef4444',
+          background: 'none',
+          border: 'none',
+          width: '100%',
+          cursor: 'pointer',
+        }}
+      >
+        <Trash2 size={16} />
+        מחיקה
+      </button>
+    </div>
+  )
+}
+
+// Add Client Modal Component
+function AddClientModal({ isOpen, onClose, onSuccess }: { 
+  isOpen: boolean
+  onClose: () => void
+  onSuccess: (client: Client) => void 
+}) {
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
@@ -457,16 +364,22 @@ function AddClientModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
         status: 'active',
       }).select().single()
 
-      if (error) {
-        console.error('Supabase error:', error)
-        throw error
-      }
-
-      if (!data) {
-        throw new Error('No data returned')
-      }
+      if (error) throw error
+      if (!data) throw new Error('No data returned')
 
       toast.success('הלקוח נוסף בהצלחה!')
+      
+      // Reset form
+      setFormData({
+        name: '',
+        partner_name: '',
+        phone: '',
+        email: '',
+        event_date: '',
+        venue_name: '',
+        total_amount: '',
+      })
+      
       onSuccess(data)
     } catch (error) {
       console.error('Error adding client:', error)
@@ -477,202 +390,71 @@ function AddClientModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
   }
 
   return (
-    <div style={{
-      position: 'fixed',
-      inset: 0,
-      background: 'rgba(0,0,0,0.5)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 100,
-      animation: 'fadeIn 0.15s ease',
-    }} onClick={onClose}>
-      <div style={{
-        background: '#fff',
-        borderRadius: '16px',
-        padding: '32px',
-        width: '100%',
-        maxWidth: '500px',
-        maxHeight: '90vh',
-        overflow: 'auto',
-        animation: 'slideUp 0.2s ease',
-      }} onClick={e => e.stopPropagation()}>
-        <h2 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '24px', color: '#0f172a' }}>
-          לקוח חדש
-        </h2>
+    <Modal isOpen={isOpen} onClose={onClose} title="לקוח חדש">
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: 'grid', gap: '16px' }}>
+          <FormField
+            label="שם הלקוח"
+            value={formData.name}
+            onChange={(v) => setFormData({ ...formData, name: v })}
+            required
+          />
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ display: 'grid', gap: '16px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
-                שם הלקוח *
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.name}
-                onChange={e => setFormData({ ...formData, name: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  borderRadius: '8px',
-                  border: '1px solid #e9eef4',
-                  fontSize: '14px',
-                }}
-              />
-            </div>
+          <FormField
+            label="שם בן/בת הזוג"
+            value={formData.partner_name}
+            onChange={(v) => setFormData({ ...formData, partner_name: v })}
+          />
 
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
-                שם בן/בת הזוג
-              </label>
-              <input
-                type="text"
-                value={formData.partner_name}
-                onChange={e => setFormData({ ...formData, partner_name: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  borderRadius: '8px',
-                  border: '1px solid #e9eef4',
-                  fontSize: '14px',
-                }}
-              />
-            </div>
+          <FormGrid columns={2}>
+            <FormField
+              label="טלפון"
+              type="tel"
+              value={formData.phone}
+              onChange={(v) => setFormData({ ...formData, phone: v })}
+              dir="ltr"
+            />
+            <FormField
+              label="אימייל"
+              type="email"
+              value={formData.email}
+              onChange={(v) => setFormData({ ...formData, email: v })}
+              dir="ltr"
+            />
+          </FormGrid>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
-                  טלפון
-                </label>
-                <input
-                  type="tel"
-                  value={formData.phone}
-                  onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '12px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid #e9eef4',
-                    fontSize: '14px',
-                    direction: 'ltr',
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
-                  אימייל
-                </label>
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={e => setFormData({ ...formData, email: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '12px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid #e9eef4',
-                    fontSize: '14px',
-                    direction: 'ltr',
-                  }}
-                />
-              </div>
-            </div>
+          <FormGrid columns={2}>
+            <FormField
+              label="תאריך אירוע"
+              type="date"
+              value={formData.event_date}
+              onChange={(v) => setFormData({ ...formData, event_date: v })}
+            />
+            <FormField
+              label="סכום עסקה"
+              type="number"
+              value={formData.total_amount}
+              onChange={(v) => setFormData({ ...formData, total_amount: v })}
+              placeholder="₪"
+            />
+          </FormGrid>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
-                  תאריך אירוע
-                </label>
-                <input
-                  type="date"
-                  value={formData.event_date}
-                  onChange={e => setFormData({ ...formData, event_date: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '12px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid #e9eef4',
-                    fontSize: '14px',
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
-                  סכום עסקה
-                </label>
-                <input
-                  type="number"
-                  value={formData.total_amount}
-                  onChange={e => setFormData({ ...formData, total_amount: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '12px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid #e9eef4',
-                    fontSize: '14px',
-                  }}
-                  placeholder="₪"
-                />
-              </div>
-            </div>
+          <FormField
+            label="מיקום האירוע"
+            value={formData.venue_name}
+            onChange={(v) => setFormData({ ...formData, venue_name: v })}
+          />
+        </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
-                מיקום האירוע
-              </label>
-              <input
-                type="text"
-                value={formData.venue_name}
-                onChange={e => setFormData({ ...formData, venue_name: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '12px 14px',
-                  borderRadius: '8px',
-                  border: '1px solid #e9eef4',
-                  fontSize: '14px',
-                }}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '12px', marginTop: '28px', justifyContent: 'flex-start' }}>
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: '12px 24px',
-                borderRadius: '10px',
-                background: '#0ea5e9',
-                color: '#fff',
-                border: 'none',
-                fontSize: '14px',
-                fontWeight: 500,
-                cursor: loading ? 'not-allowed' : 'pointer',
-                opacity: loading ? 0.7 : 1,
-              }}
-            >
-              {loading ? 'שומר...' : 'שמור לקוח'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                padding: '12px 24px',
-                borderRadius: '10px',
-                background: '#f1f5f9',
-                color: '#64748b',
-                border: 'none',
-                fontSize: '14px',
-                fontWeight: 500,
-                cursor: 'pointer',
-              }}
-            >
-              ביטול
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <FormActions>
+          <Button type="submit" loading={loading}>
+            שמור לקוח
+          </Button>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            ביטול
+          </Button>
+        </FormActions>
+      </form>
+    </Modal>
   )
 }

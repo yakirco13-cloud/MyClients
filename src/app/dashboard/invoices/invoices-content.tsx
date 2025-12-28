@@ -1,13 +1,23 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { 
-  Search, FileText, Download, Eye, Filter,
-  TrendingUp, CheckCircle, Clock, AlertCircle,
-  Plus, Receipt, Calendar
+  TrendingUp, CheckCircle, Clock, FileText, 
+  Download, Eye, Receipt 
 } from 'lucide-react'
+import { 
+  StatCard, 
+  StatsGrid, 
+  FilterBar, 
+  DataTable, 
+  AvatarCell, 
+  BadgeCell,
+  ActionsCell,
+  ActionButton,
+  EmptyState,
+  type Column
+} from '@/components/shared'
 
 type Invoice = {
   id: string
@@ -31,8 +41,30 @@ type Props = {
   totalPaid: number
 }
 
+// Color rotation for avatars
+const colors = ['#3b82f6', '#eab308', '#10b981', '#8b5cf6', '#f97316']
+const bgColors = ['#eff6ff', '#fefce8', '#ecfdf5', '#f5f3ff', '#fff7ed']
+
+// Status helpers
+const getStatusVariant = (status: string): 'success' | 'warning' | 'error' | 'default' => {
+  switch (status) {
+    case 'paid': return 'success'
+    case 'pending': return 'warning'
+    case 'cancelled': return 'error'
+    default: return 'default'
+  }
+}
+
+const getStatusLabel = (status: string) => {
+  switch (status) {
+    case 'paid': return 'שולם'
+    case 'pending': return 'ממתין'
+    case 'cancelled': return 'בוטל'
+    default: return status
+  }
+}
+
 export default function InvoicesContent({ invoices, monthTotal, totalPaid }: Props) {
-  const router = useRouter()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
 
@@ -55,363 +87,168 @@ export default function InvoicesContent({ invoices, monthTotal, totalPaid }: Pro
     total: invoices.length,
     paid: invoices.filter(i => i.status === 'paid').length,
     pending: invoices.filter(i => i.status === 'pending').length,
-    monthTotal,
-    totalPaid,
-    pendingAmount,
   }
 
-  const getStatusStyle = (status: string) => {
-    switch (status) {
-      case 'paid':
-        return { background: '#ecfdf5', color: '#10b981' }
-      case 'pending':
-        return { background: '#fefce8', color: '#ca8a04' }
-      case 'cancelled':
-        return { background: '#fef2f2', color: '#ef4444' }
-      default:
-        return { background: '#f1f5f9', color: '#64748b' }
-    }
-  }
-
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'paid': return 'שולם'
-      case 'pending': return 'ממתין'
-      case 'cancelled': return 'בוטל'
-      default: return status
-    }
-  }
-
-  const handleDownloadPdf = async (invoice: Invoice) => {
+  const handleDownloadPdf = (invoice: Invoice) => {
     if (invoice.green_invoice_id) {
       window.open(`/api/green-invoice/pdf?id=${invoice.green_invoice_id}`, '_blank')
     }
   }
 
+  // Table columns
+  const columns: Column<Invoice>[] = [
+    {
+      key: 'number',
+      header: 'מספר',
+      width: '80px',
+      render: (invoice) => (
+        <span style={{ fontWeight: 500, color: '#1e293b' }}>
+          #{invoice.invoice_number || invoice.id.slice(0, 6)}
+        </span>
+      ),
+    },
+    {
+      key: 'client',
+      header: 'לקוח',
+      width: '2fr',
+      render: (invoice, index) => {
+        const clientName = invoice.clients?.name || 'לקוח לא ידוע'
+        const partnerName = invoice.clients?.partner_name
+        return (
+          <AvatarCell
+            name={clientName + (partnerName ? ` & ${partnerName}` : '')}
+            subtitle={invoice.description || undefined}
+            color={colors[index % 5]}
+            bgColor={bgColors[index % 5]}
+          />
+        )
+      },
+    },
+    {
+      key: 'amount',
+      header: 'סכום',
+      width: '1fr',
+      render: (invoice) => (
+        <span style={{ fontSize: '15px', fontWeight: 600, color: '#10b981' }}>
+          ₪{invoice.amount.toLocaleString()}
+        </span>
+      ),
+    },
+    {
+      key: 'date',
+      header: 'תאריך',
+      width: '1fr',
+      render: (invoice) => (
+        <span style={{ color: '#64748b' }}>
+          {new Date(invoice.created_at).toLocaleDateString('he-IL')}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'סטטוס',
+      width: '100px',
+      render: (invoice) => (
+        <BadgeCell 
+          label={getStatusLabel(invoice.status)} 
+          variant={getStatusVariant(invoice.status)} 
+        />
+      ),
+    },
+    {
+      key: 'actions',
+      header: '',
+      width: '100px',
+      render: (invoice) => (
+        <ActionsCell>
+          {invoice.client_id && (
+            <Link href={`/dashboard/clients/${invoice.client_id}`}>
+              <ActionButton 
+                icon={<Eye size={16} />} 
+                onClick={() => {}} 
+                title="צפה בלקוח"
+              />
+            </Link>
+          )}
+          {invoice.green_invoice_id && (
+            <ActionButton 
+              icon={<Download size={16} />} 
+              onClick={() => handleDownloadPdf(invoice)} 
+              variant="success"
+              title="הורד PDF"
+            />
+          )}
+        </ActionsCell>
+      ),
+    },
+  ]
+
   return (
     <div>
-      {/* Stats Row */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
-        gap: '20px',
-        marginBottom: '28px',
-      }}>
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e9eef4',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            <div style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '8px',
-              background: '#eff6ff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <TrendingUp size={18} color="#3b82f6" />
-            </div>
-            <span style={{ fontSize: '13px', color: '#64748b' }}>הכנסות החודש</span>
-          </div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#3b82f6' }}>
-            ₪{stats.monthTotal.toLocaleString()}
-          </div>
-        </div>
+      {/* Stats */}
+      <StatsGrid columns={4}>
+        <StatCard
+          label="הכנסות החודש"
+          value={`₪${monthTotal.toLocaleString()}`}
+          icon={<TrendingUp size={18} color="#3b82f6" />}
+          iconBg="#eff6ff"
+          valueColor="#3b82f6"
+        />
+        <StatCard
+          label="סה״כ שולם"
+          value={`₪${totalPaid.toLocaleString()}`}
+          icon={<CheckCircle size={18} color="#10b981" />}
+          iconBg="#ecfdf5"
+          valueColor="#10b981"
+        />
+        <StatCard
+          label="ממתין לתשלום"
+          value={`₪${pendingAmount.toLocaleString()}`}
+          icon={<Clock size={18} color="#ca8a04" />}
+          iconBg="#fefce8"
+          valueColor="#ca8a04"
+        />
+        <StatCard
+          label="סה״כ חשבוניות"
+          value={stats.total}
+          icon={<FileText size={18} color="#8b5cf6" />}
+          iconBg="#f5f3ff"
+          subtitle={`${stats.paid} שולמו • ${stats.pending} ממתינות`}
+        />
+      </StatsGrid>
 
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e9eef4',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            <div style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '8px',
-              background: '#ecfdf5',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <CheckCircle size={18} color="#10b981" />
-            </div>
-            <span style={{ fontSize: '13px', color: '#64748b' }}>סה״כ שולם</span>
-          </div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#10b981' }}>
-            ₪{stats.totalPaid.toLocaleString()}
-          </div>
-        </div>
+      {/* Filters */}
+      <FilterBar
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="חיפוש חשבוניות..."
+        filters={[
+          {
+            value: statusFilter,
+            onChange: setStatusFilter,
+            options: [
+              { value: 'all', label: 'כל הסטטוסים' },
+              { value: 'paid', label: 'שולם' },
+              { value: 'pending', label: 'ממתין' },
+              { value: 'cancelled', label: 'בוטל' },
+            ],
+          },
+        ]}
+      />
 
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e9eef4',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            <div style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '8px',
-              background: '#fefce8',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <Clock size={18} color="#ca8a04" />
-            </div>
-            <span style={{ fontSize: '13px', color: '#64748b' }}>ממתין לתשלום</span>
-          </div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#ca8a04' }}>
-            ₪{stats.pendingAmount.toLocaleString()}
-          </div>
-        </div>
-
-        <div style={{
-          background: '#fff',
-          borderRadius: '12px',
-          padding: '20px',
-          border: '1px solid #e9eef4',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            <div style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '8px',
-              background: '#f5f3ff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <FileText size={18} color="#8b5cf6" />
-            </div>
-            <span style={{ fontSize: '13px', color: '#64748b' }}>סה״כ חשבוניות</span>
-          </div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#0f172a' }}>
-            {stats.total}
-          </div>
-          <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
-            {stats.paid} שולמו • {stats.pending} ממתינות
-          </div>
-        </div>
-      </div>
-
-      {/* Filters Row */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '24px',
-        gap: '16px',
-      }}>
-        {/* Search */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          background: '#fff',
-          border: '1px solid #e9eef4',
-          borderRadius: '10px',
-          padding: '12px 16px',
-          flex: 1,
-          maxWidth: '400px',
-        }}>
-          <Search size={20} color="#94a3b8" />
-          <input
-            type="text"
-            placeholder="חיפוש חשבוניות..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              border: 'none',
-              outline: 'none',
-              width: '100%',
-              fontSize: '14px',
-              background: 'transparent',
-            }}
+      {/* Table */}
+      <DataTable
+        columns={columns}
+        data={filteredInvoices}
+        keyExtractor={(invoice) => invoice.id}
+        emptyState={
+          <EmptyState
+            icon={<Receipt size={48} />}
+            title={searchQuery || statusFilter !== 'all' ? 'לא נמצאו חשבוניות תואמות' : 'אין חשבוניות עדיין'}
+            description="חשבוניות ייצרו מדף הלקוח"
           />
-        </div>
-
-        {/* Filter */}
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            style={{
-              padding: '12px 16px',
-              borderRadius: '10px',
-              border: '1px solid #e9eef4',
-              background: '#fff',
-              fontSize: '14px',
-              color: '#1e293b',
-              cursor: 'pointer',
-            }}
-          >
-            <option value="all">כל הסטטוסים</option>
-            <option value="paid">שולם</option>
-            <option value="pending">ממתין</option>
-            <option value="cancelled">בוטל</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Invoices Table */}
-      <div style={{
-        background: '#fff',
-        borderRadius: '16px',
-        border: '1px solid #e9eef4',
-        overflow: 'hidden',
-      }}>
-        {/* Table Header */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '80px 2fr 1fr 1fr 100px 100px',
-          padding: '16px 24px',
-          background: '#f8fafc',
-          borderBottom: '1px solid #e9eef4',
-          fontSize: '12px',
-          fontWeight: 600,
-          color: '#64748b',
-          textTransform: 'uppercase',
-          letterSpacing: '0.5px',
-        }}>
-          <div>מספר</div>
-          <div>לקוח</div>
-          <div>סכום</div>
-          <div>תאריך</div>
-          <div>סטטוס</div>
-          <div></div>
-        </div>
-
-        {/* Table Body */}
-        {filteredInvoices.length === 0 ? (
-          <div style={{ padding: '60px 24px', textAlign: 'center', color: '#94a3b8' }}>
-            <Receipt size={48} style={{ opacity: 0.3, marginBottom: '12px' }} />
-            <p>{searchQuery || statusFilter !== 'all' ? 'לא נמצאו חשבוניות תואמות' : 'אין חשבוניות עדיין'}</p>
-            <p style={{ fontSize: '13px' }}>חשבוניות ייצרו מדף הלקוח</p>
-          </div>
-        ) : (
-          filteredInvoices.map((invoice, i) => {
-            const colors = ['#3b82f6', '#eab308', '#10b981', '#8b5cf6', '#f97316']
-            const bgs = ['#eff6ff', '#fefce8', '#ecfdf5', '#f5f3ff', '#fff7ed']
-            const clientName = invoice.clients?.name || 'לקוח לא ידוע'
-            const partnerName = invoice.clients?.partner_name
-            
-            return (
-              <div
-                key={invoice.id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '80px 2fr 1fr 1fr 100px 100px',
-                  padding: '18px 24px',
-                  borderBottom: '1px solid #f1f5f9',
-                  alignItems: 'center',
-                }}
-              >
-                {/* Invoice Number */}
-                <div style={{ fontSize: '14px', fontWeight: 500, color: '#1e293b' }}>
-                  #{invoice.invoice_number || invoice.id.slice(0, 6)}
-                </div>
-
-                {/* Client */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '10px',
-                    background: bgs[i % 5],
-                    color: colors[i % 5],
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 700,
-                    fontSize: '14px',
-                  }}>
-                    {clientName.charAt(0)}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '14px', fontWeight: 500, color: '#1e293b' }}>
-                      {clientName}{partnerName && ` & ${partnerName}`}
-                    </div>
-                    {invoice.description && (
-                      <div style={{ fontSize: '12px', color: '#94a3b8' }}>{invoice.description}</div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Amount */}
-                <div style={{ fontSize: '15px', fontWeight: 600, color: '#10b981' }}>
-                  ₪{invoice.amount.toLocaleString()}
-                </div>
-
-                {/* Date */}
-                <div style={{ fontSize: '14px', color: '#64748b' }}>
-                  {new Date(invoice.created_at).toLocaleDateString('he-IL')}
-                </div>
-
-                {/* Status */}
-                <div>
-                  <span style={{
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    ...getStatusStyle(invoice.status),
-                  }}>
-                    {getStatusLabel(invoice.status)}
-                  </span>
-                </div>
-
-                {/* Actions */}
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                  {invoice.client_id && (
-                    <Link
-                      href={`/dashboard/clients/${invoice.client_id}`}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '8px',
-                        background: '#f1f5f9',
-                        color: '#64748b',
-                        textDecoration: 'none',
-                      }}
-                    >
-                      <Eye size={16} />
-                    </Link>
-                  )}
-                  {invoice.green_invoice_id && (
-                    <button
-                      onClick={() => handleDownloadPdf(invoice)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '8px',
-                        background: '#ecfdf5',
-                        color: '#10b981',
-                        border: 'none',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <Download size={16} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            )
-          })
-        )}
-      </div>
+        }
+      />
 
       {/* Summary Footer */}
       {invoices.length > 0 && (
@@ -425,27 +262,24 @@ export default function InvoicesContent({ invoices, monthTotal, totalPaid }: Pro
           border: '1px solid #e9eef4',
         }}>
           <div style={{ display: 'flex', gap: '40px' }}>
-            <div>
-              <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '4px' }}>סה״כ הכנסות</div>
-              <div style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a' }}>
-                ₪{totalAmount.toLocaleString()}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '4px' }}>שולם</div>
-              <div style={{ fontSize: '24px', fontWeight: 700, color: '#10b981' }}>
-                ₪{stats.totalPaid.toLocaleString()}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '4px' }}>ממתין</div>
-              <div style={{ fontSize: '24px', fontWeight: 700, color: '#ca8a04' }}>
-                ₪{stats.pendingAmount.toLocaleString()}
-              </div>
-            </div>
+            <SummaryItem label="סה״כ הכנסות" value={totalAmount} />
+            <SummaryItem label="שולם" value={totalPaid} color="#10b981" />
+            <SummaryItem label="ממתין" value={pendingAmount} color="#ca8a04" />
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Summary item helper
+function SummaryItem({ label, value, color = '#0f172a' }: { label: string; value: number; color?: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '4px' }}>{label}</div>
+      <div style={{ fontSize: '24px', fontWeight: 700, color }}>
+        ₪{value.toLocaleString()}
+      </div>
     </div>
   )
 }
