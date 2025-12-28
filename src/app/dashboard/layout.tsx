@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useQueryClient, useIsFetching } from '@tanstack/react-query'
+import { useIsFetching } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { 
   LayoutDashboard, 
@@ -20,19 +20,18 @@ import {
 } from 'lucide-react'
 
 const navigation = [
-  { name: 'דשבורד', href: '/dashboard', icon: LayoutDashboard, queryKey: 'dashboard' },
-  { name: 'לקוחות', href: '/dashboard/clients', icon: Users, queryKey: 'clients' },
-  { name: 'ספריית שירים', href: '/dashboard/songs', icon: Music, queryKey: 'songs' },
-  { name: 'חשבוניות', href: '/dashboard/invoices', icon: FileText, queryKey: 'invoices' },
-  { name: 'הוצאות', href: '/dashboard/expenses', icon: Receipt, queryKey: 'expenses' },
-  { name: 'הגדרות', href: '/dashboard/settings', icon: Settings, queryKey: 'settings' },
+  { name: 'דשבורד', href: '/dashboard', icon: LayoutDashboard },
+  { name: 'לקוחות', href: '/dashboard/clients', icon: Users },
+  { name: 'ספריית שירים', href: '/dashboard/songs', icon: Music },
+  { name: 'חשבוניות', href: '/dashboard/invoices', icon: FileText },
+  { name: 'הוצאות', href: '/dashboard/expenses', icon: Receipt },
+  { name: 'הגדרות', href: '/dashboard/settings', icon: Settings },
 ]
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pathname = usePathname()
   const router = useRouter()
-  const queryClient = useQueryClient()
   const supabase = createClient()
   const isFetching = useIsFetching()
 
@@ -52,26 +51,73 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="app-container">
-      {/* Progress bar - only shows when fetching */}
-      {isFetching > 0 && <div className="progress-bar" />}
+    <div style={{
+      minHeight: '100vh',
+      background: '#f4f7fa',
+      display: 'flex',
+      direction: 'rtl',
+    }}>
+      {/* Progress bar */}
+      {isFetching > 0 && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: '3px',
+          background: 'linear-gradient(90deg, #0ea5e9, #38bdf8, #0ea5e9)',
+          backgroundSize: '200% 100%',
+          animation: 'progress 1s ease-in-out infinite',
+          zIndex: 9999,
+        }} />
+      )}
 
       {/* Mobile backdrop */}
-      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+      {sidebarOpen && (
+        <div 
+          onClick={() => setSidebarOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            zIndex: 40,
+          }} 
+        />
+      )}
 
       {/* Sidebar */}
-      <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
-        <div className="sidebar-header">
+      <aside style={{
+        position: sidebarOpen ? 'fixed' : undefined,
+        top: 0,
+        right: 0,
+        height: '100vh',
+        width: '260px',
+        background: '#0f172a',
+        display: 'flex',
+        flexDirection: 'column',
+        zIndex: 50,
+        transform: sidebarOpen ? 'translateX(0)' : undefined,
+        transition: 'transform 0.2s ease',
+      }} className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+        {/* Logo */}
+        <div style={{ padding: '28px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <span className="logo"><span className="logo-accent">My</span>Clients</span>
-            <div className="logo-subtitle">ניהול לקוחות לעסקים</div>
+            <span style={{ fontSize: '24px', fontWeight: 700, color: '#ffffff' }}>
+              <span style={{ color: '#38bdf8' }}>My</span>Clients
+            </span>
+            <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>ניהול לקוחות לעסקים</div>
           </div>
-          <button onClick={() => setSidebarOpen(false)} className="close-btn">
+          <button 
+            onClick={() => setSidebarOpen(false)} 
+            className="close-btn"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+          >
             <X size={20} color="#ffffff" />
           </button>
         </div>
 
-        <nav className="sidebar-nav">
+        {/* Nav */}
+        <nav style={{ padding: '0 16px', flex: 1 }}>
           {navigation.map((item) => {
             const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
             const Icon = item.icon
@@ -81,7 +127,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 href={item.href}
                 prefetch={true}
                 onClick={() => setSidebarOpen(false)}
-                className={`nav-link ${isActive ? 'active' : ''}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '14px',
+                  padding: '14px 18px',
+                  borderRadius: '12px',
+                  fontSize: '14px',
+                  textDecoration: 'none',
+                  marginBottom: '4px',
+                  background: isActive ? '#0ea5e9' : 'transparent',
+                  color: isActive ? '#ffffff' : '#94a3b8',
+                  fontWeight: isActive ? 500 : 400,
+                  transition: 'all 0.15s ease',
+                }}
               >
                 <Icon size={20} strokeWidth={1.8} />
                 <span>{item.name}</span>
@@ -90,12 +149,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
         </nav>
 
-        <div className="sidebar-footer">
-          <button onClick={handleLogout} className="logout-btn">
-            <div className="user-avatar">מ</div>
-            <div className="user-info">
-              <div className="user-name">המשתמש שלי</div>
-              <div className="user-action">התנתקות</div>
+        {/* Logout */}
+        <div style={{ padding: '16px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+          <button 
+            onClick={handleLogout}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              width: '100%',
+              padding: '12px',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              borderRadius: '12px',
+            }}
+          >
+            <div style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '10px',
+              background: '#0ea5e9',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#ffffff',
+              fontWeight: 600,
+              fontSize: '16px',
+            }}>מ</div>
+            <div style={{ flex: 1, textAlign: 'right' }}>
+              <div style={{ color: '#ffffff', fontSize: '14px', fontWeight: 500 }}>המשתמש שלי</div>
+              <div style={{ color: '#94a3b8', fontSize: '12px' }}>התנתקות</div>
             </div>
             <LogOut size={18} color="#94a3b8" />
           </button>
@@ -103,202 +187,105 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main */}
-      <div className="main-wrapper">
-        <header className="top-header">
-          <div className="header-right">
-            <button className="menu-btn" onClick={() => setSidebarOpen(true)}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {/* Header */}
+        <header style={{
+          background: '#fff',
+          padding: '20px 36px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          borderBottom: '1px solid #e9eef4',
+          position: 'sticky',
+          top: 0,
+          zIndex: 30,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <button 
+              className="menu-btn" 
+              onClick={() => setSidebarOpen(true)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px', margin: '-8px' }}
+            >
               <Menu size={24} color="#0f172a" />
             </button>
             <div>
-              <h1 className="page-title">{getPageTitle()}</h1>
-              <p className="page-date">
+              <h1 style={{ fontSize: '28px', fontWeight: 700, color: '#0f172a', margin: 0 }}>{getPageTitle()}</h1>
+              <p style={{ fontSize: '13px', color: '#64748b', margin: '6px 0 0 0' }}>
                 {new Date().toLocaleDateString('he-IL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
               </p>
             </div>
           </div>
           
-          <div className="header-left">
-            <button className="icon-btn"><Bell size={20} /></button>
-            <Link href="/dashboard/clients" className="primary-btn" prefetch={true}>
-              <Plus size={20} /><span>לקוח חדש</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <button style={{
+              width: '44px',
+              height: '44px',
+              borderRadius: '10px',
+              border: '1px solid #e9eef4',
+              background: '#fff',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#64748b',
+            }}>
+              <Bell size={20} />
+            </button>
+            <Link 
+              href="/dashboard/clients" 
+              prefetch={true}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '12px 24px',
+                borderRadius: '10px',
+                background: '#0ea5e9',
+                color: '#fff',
+                fontSize: '14px',
+                fontWeight: 500,
+                textDecoration: 'none',
+              }}
+            >
+              <Plus size={20} />
+              <span>לקוח חדש</span>
             </Link>
           </div>
         </header>
 
-        <main className="main-content">{children}</main>
+        {/* Content */}
+        <main style={{ padding: '28px 36px', flex: 1 }}>
+          {children}
+        </main>
       </div>
 
-      <style jsx>{`
-        .app-container {
-          min-height: 100vh;
-          background: #f4f7fa;
-          display: flex;
-          direction: rtl;
-        }
-
-        .progress-bar {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          height: 3px;
-          background: linear-gradient(90deg, #0ea5e9, #38bdf8, #0ea5e9);
-          background-size: 200% 100%;
-          animation: progress 1s ease-in-out infinite;
-          z-index: 9999;
-        }
-
+      <style jsx global>{`
         @keyframes progress {
           0% { background-position: 200% 0; }
           100% { background-position: -200% 0; }
         }
 
-        .sidebar-backdrop {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.5);
-          z-index: 40;
-        }
-
         .sidebar {
           position: fixed;
-          top: 0;
-          right: 0;
-          height: 100vh;
-          width: 260px;
-          background: #0f172a;
-          display: flex;
-          flex-direction: column;
-          z-index: 50;
           transform: translateX(100%);
-          transition: transform 0.2s ease;
         }
 
-        .sidebar-open { transform: translateX(0); }
-
-        .sidebar-header {
-          padding: 28px 24px;
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
+        .sidebar.sidebar-open {
+          transform: translateX(0);
         }
-
-        .logo { font-size: 24px; font-weight: 700; color: #ffffff; }
-        .logo-accent { color: #38bdf8; }
-        .logo-subtitle { font-size: 12px; color: #94a3b8; margin-top: 4px; }
-        .close-btn { background: none; border: none; cursor: pointer; padding: 4px; }
 
         @media (min-width: 1024px) {
-          .sidebar { position: relative; transform: translateX(0); }
-          .sidebar-backdrop { display: none; }
-          .menu-btn { display: none !important; }
-          .close-btn { display: none !important; }
+          .sidebar {
+            position: relative !important;
+            transform: translateX(0) !important;
+          }
+          .menu-btn {
+            display: none !important;
+          }
+          .close-btn {
+            display: none !important;
+          }
         }
-
-        .sidebar-nav { padding: 0 16px; flex: 1; }
-
-        .nav-link {
-          display: flex;
-          align-items: center;
-          gap: 14px;
-          padding: 14px 18px;
-          border-radius: 12px;
-          font-size: 14px;
-          text-decoration: none;
-          margin-bottom: 4px;
-          color: #94a3b8;
-          transition: all 0.15s ease;
-        }
-
-        .nav-link:hover { background: rgba(255,255,255,0.08); color: #ffffff; }
-        .nav-link.active { background: #0ea5e9; color: #ffffff; font-weight: 500; }
-
-        .sidebar-footer { padding: 16px; border-top: 1px solid rgba(255,255,255,0.1); }
-
-        .logout-btn {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          width: 100%;
-          padding: 12px;
-          background: transparent;
-          border: none;
-          cursor: pointer;
-          border-radius: 12px;
-          transition: background 0.15s ease;
-        }
-
-        .logout-btn:hover { background: rgba(255,255,255,0.05); }
-
-        .user-avatar {
-          width: 40px;
-          height: 40px;
-          border-radius: 10px;
-          background: #0ea5e9;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #ffffff;
-          font-weight: 600;
-        }
-
-        .user-info { flex: 1; text-align: right; }
-        .user-name { color: #ffffff; font-size: 14px; font-weight: 500; }
-        .user-action { color: #94a3b8; font-size: 12px; }
-
-        .main-wrapper { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-
-        .top-header {
-          background: #fff;
-          padding: 20px 36px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          border-bottom: 1px solid #e9eef4;
-          position: sticky;
-          top: 0;
-          z-index: 30;
-        }
-
-        .header-right { display: flex; align-items: center; gap: 16px; }
-        .menu-btn { background: none; border: none; cursor: pointer; padding: 8px; margin: -8px; }
-        .page-title { font-size: 28px; font-weight: 700; color: #0f172a; margin: 0; }
-        .page-date { font-size: 13px; color: #64748b; margin: 6px 0 0 0; }
-        .header-left { display: flex; align-items: center; gap: 14px; }
-
-        .icon-btn {
-          width: 44px;
-          height: 44px;
-          border-radius: 10px;
-          border: 1px solid #e9eef4;
-          background: #fff;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: #64748b;
-          transition: all 0.15s ease;
-        }
-
-        .icon-btn:hover { border-color: #cbd5e1; background: #f8fafc; }
-
-        .primary-btn {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 12px 24px;
-          border-radius: 10px;
-          background: #0ea5e9;
-          color: #fff;
-          font-size: 14px;
-          font-weight: 500;
-          text-decoration: none;
-          transition: background 0.15s ease;
-        }
-
-        .primary-btn:hover { background: #0284c7; }
-
-        .main-content { padding: 28px 36px; flex: 1; }
       `}</style>
     </div>
   )
