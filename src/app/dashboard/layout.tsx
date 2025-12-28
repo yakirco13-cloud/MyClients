@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { 
   LayoutDashboard, 
@@ -19,24 +20,25 @@ import {
 } from 'lucide-react'
 
 const navigation = [
-  { name: 'דשבורד', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'לקוחות', href: '/dashboard/clients', icon: Users },
-  { name: 'ספריית שירים', href: '/dashboard/songs', icon: Music },
-  { name: 'חשבוניות', href: '/dashboard/invoices', icon: FileText },
-  { name: 'הוצאות', href: '/dashboard/expenses', icon: Receipt },
-  { name: 'הגדרות', href: '/dashboard/settings', icon: Settings },
+  { name: 'דשבורד', href: '/dashboard', icon: LayoutDashboard, queryKey: 'dashboard' },
+  { name: 'לקוחות', href: '/dashboard/clients', icon: Users, queryKey: 'clients' },
+  { name: 'ספריית שירים', href: '/dashboard/songs', icon: Music, queryKey: 'songs' },
+  { name: 'חשבוניות', href: '/dashboard/invoices', icon: FileText, queryKey: 'invoices' },
+  { name: 'הוצאות', href: '/dashboard/expenses', icon: Receipt, queryKey: 'expenses' },
+  { name: 'הגדרות', href: '/dashboard/settings', icon: Settings, queryKey: 'settings' },
 ]
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pathname = usePathname()
   const router = useRouter()
+  const queryClient = useQueryClient()
   const supabase = createClient()
+  const isFetching = useIsFetching()
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
-    router.refresh()
   }
 
   const getPageTitle = () => {
@@ -51,86 +53,49 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="app-container">
+      {/* Progress bar - only shows when fetching */}
+      {isFetching > 0 && <div className="progress-bar" />}
+
       {/* Mobile backdrop */}
-      {sidebarOpen && (
-        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
-      )}
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
 
       {/* Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
-        {/* Logo */}
-        <div style={{ padding: '28px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div className="sidebar-header">
           <div>
-            <span style={{ fontSize: '24px', fontWeight: 700, color: '#ffffff' }}>
-              <span style={{ color: '#38bdf8' }}>My</span>Clients
-            </span>
-            <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>ניהול לקוחות לעסקים</div>
+            <span className="logo"><span className="logo-accent">My</span>Clients</span>
+            <div className="logo-subtitle">ניהול לקוחות לעסקים</div>
           </div>
-          <button onClick={() => setSidebarOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'none' }} className="close-btn">
+          <button onClick={() => setSidebarOpen(false)} className="close-btn">
             <X size={20} color="#ffffff" />
           </button>
         </div>
 
-        {/* Nav */}
         <nav className="sidebar-nav">
           {navigation.map((item) => {
-            const isActive = pathname === item.href || 
-              (item.href !== '/dashboard' && pathname.startsWith(item.href))
+            const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
             const Icon = item.icon
             return (
               <Link
                 key={item.name}
                 href={item.href}
+                prefetch={true}
                 onClick={() => setSidebarOpen(false)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '14px',
-                  padding: '14px 18px',
-                  borderRadius: '12px',
-                  fontSize: '14px',
-                  textDecoration: 'none',
-                  marginBottom: '4px',
-                  background: isActive ? '#0ea5e9' : 'transparent',
-                  color: isActive ? '#ffffff' : '#cbd5e1',
-                  fontWeight: isActive ? 500 : 400,
-                }}
+                className={`nav-link ${isActive ? 'active' : ''}`}
               >
-                <Icon size={20} strokeWidth={1.8} color={isActive ? '#ffffff' : '#cbd5e1'} />
-                {item.name}
+                <Icon size={20} strokeWidth={1.8} />
+                <span>{item.name}</span>
               </Link>
             )
           })}
         </nav>
 
-        {/* Logout */}
-        <div style={{ padding: '0 16px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '20px' }}>
-          <button onClick={handleLogout} style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            width: '100%',
-            padding: '12px',
-            background: 'transparent',
-            border: 'none',
-            cursor: 'pointer',
-            borderRadius: '12px',
-          }}>
-            <div style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '10px',
-              background: '#0ea5e9',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#ffffff',
-              fontWeight: 600,
-              fontSize: '16px',
-            }}>מ</div>
-            <div style={{ flex: 1, textAlign: 'right' }}>
-              <div style={{ color: '#ffffff', fontSize: '14px', fontWeight: 500 }}>המשתמש שלי</div>
-              <div style={{ color: '#94a3b8', fontSize: '12px' }}>התנתקות</div>
+        <div className="sidebar-footer">
+          <button onClick={handleLogout} className="logout-btn">
+            <div className="user-avatar">מ</div>
+            <div className="user-info">
+              <div className="user-name">המשתמש שלי</div>
+              <div className="user-action">התנתקות</div>
             </div>
             <LogOut size={18} color="#94a3b8" />
           </button>
@@ -139,7 +104,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Main */}
       <div className="main-wrapper">
-        {/* Header */}
         <header className="top-header">
           <div className="header-right">
             <button className="menu-btn" onClick={() => setSidebarOpen(true)}>
@@ -154,20 +118,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
           
           <div className="header-left">
-            <button className="icon-btn">
-              <Bell size={20} />
-            </button>
-            <Link href="/dashboard/clients" className="primary-btn">
-              <Plus size={20} />
-              לקוח חדש
+            <button className="icon-btn"><Bell size={20} /></button>
+            <Link href="/dashboard/clients" className="primary-btn" prefetch={true}>
+              <Plus size={20} /><span>לקוח חדש</span>
             </Link>
           </div>
         </header>
 
-        {/* Content */}
-        <main className="main-content">
-          {children}
-        </main>
+        <main className="main-content">{children}</main>
       </div>
 
       <style jsx>{`
@@ -176,6 +134,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           background: #f4f7fa;
           display: flex;
           direction: rtl;
+        }
+
+        .progress-bar {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 3px;
+          background: linear-gradient(90deg, #0ea5e9, #38bdf8, #0ea5e9);
+          background-size: 200% 100%;
+          animation: progress 1s ease-in-out infinite;
+          z-index: 9999;
+        }
+
+        @keyframes progress {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
         }
 
         .sidebar-backdrop {
@@ -192,7 +167,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           height: 100vh;
           width: 260px;
           background: #0f172a;
-          padding: 28px 0;
           display: flex;
           flex-direction: column;
           z-index: 50;
@@ -200,140 +174,79 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           transition: transform 0.2s ease;
         }
 
-        .sidebar-open {
-          transform: translateX(0);
-        }
-
-        @media (min-width: 1024px) {
-          .sidebar {
-            position: relative;
-            transform: translateX(0);
-          }
-          .sidebar-backdrop {
-            display: none;
-          }
-          .menu-btn {
-            display: none !important;
-          }
-          .close-btn {
-            display: none !important;
-          }
-        }
+        .sidebar-open { transform: translateX(0); }
 
         .sidebar-header {
-          padding: 0 28px;
-          margin-bottom: 40px;
+          padding: 28px 24px;
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
         }
 
-        .logo {
-          font-size: 24px;
-          font-weight: 800;
-          color: #fff;
-          letter-spacing: -1px;
+        .logo { font-size: 24px; font-weight: 700; color: #ffffff; }
+        .logo-accent { color: #38bdf8; }
+        .logo-subtitle { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+        .close-btn { background: none; border: none; cursor: pointer; padding: 4px; }
+
+        @media (min-width: 1024px) {
+          .sidebar { position: relative; transform: translateX(0); }
+          .sidebar-backdrop { display: none; }
+          .menu-btn { display: none !important; }
+          .close-btn { display: none !important; }
         }
 
-        .logo-accent {
-          color: #38bdf8;
-        }
+        .sidebar-nav { padding: 0 16px; flex: 1; }
 
-        .logo-subtitle {
-          font-size: 12px;
-          color: #64748b;
-          margin-top: 4px;
-        }
-
-        .close-btn {
-          background: none;
-          border: none;
-          color: #fff;
-          cursor: pointer;
-        }
-
-        .sidebar-nav {
-          padding: 0 16px;
-          flex: 1;
-        }
-
-        .nav-item {
+        .nav-link {
           display: flex;
           align-items: center;
           gap: 14px;
           padding: 14px 18px;
           border-radius: 12px;
-          color: #94a3b8 !important;
           font-size: 14px;
           text-decoration: none;
           margin-bottom: 4px;
+          color: #94a3b8;
           transition: all 0.15s ease;
-          background: transparent;
         }
 
-        .nav-item:hover {
-          background: rgba(255,255,255,0.08);
-          color: #ffffff !important;
-        }
+        .nav-link:hover { background: rgba(255,255,255,0.08); color: #ffffff; }
+        .nav-link.active { background: #0ea5e9; color: #ffffff; font-weight: 500; }
 
-        .nav-item-active {
-          background: #0ea5e9 !important;
-          color: #ffffff !important;
-          font-weight: 500;
-        }
-
-        .sidebar-footer {
-          padding: 0 16px;
-        }
+        .sidebar-footer { padding: 16px; border-top: 1px solid rgba(255,255,255,0.1); }
 
         .logout-btn {
           display: flex;
           align-items: center;
-          gap: 14px;
-          padding: 16px;
-          border-radius: 14px;
-          background: rgba(255,255,255,0.05);
-          border: 1px solid rgba(255,255,255,0.08);
+          gap: 12px;
           width: 100%;
+          padding: 12px;
+          background: transparent;
+          border: none;
           cursor: pointer;
-          color: #94a3b8;
+          border-radius: 12px;
+          transition: background 0.15s ease;
         }
 
+        .logout-btn:hover { background: rgba(255,255,255,0.05); }
+
         .user-avatar {
-          width: 42px;
-          height: 42px;
+          width: 40px;
+          height: 40px;
           border-radius: 10px;
-          background: linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%);
+          background: #0ea5e9;
           display: flex;
           align-items: center;
           justify-content: center;
-          color: #fff;
-          font-weight: 700;
-          font-size: 16px;
+          color: #ffffff;
+          font-weight: 600;
         }
 
-        .user-info {
-          flex: 1;
-          text-align: right;
-        }
+        .user-info { flex: 1; text-align: right; }
+        .user-name { color: #ffffff; font-size: 14px; font-weight: 500; }
+        .user-action { color: #94a3b8; font-size: 12px; }
 
-        .user-name {
-          color: #fff;
-          font-weight: 500;
-          font-size: 14px;
-        }
-
-        .user-action {
-          color: #64748b;
-          font-size: 12px;
-        }
-
-        .main-wrapper {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          overflow: auto;
-        }
+        .main-wrapper { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
         .top-header {
           background: #fff;
@@ -342,40 +255,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           align-items: center;
           justify-content: space-between;
           border-bottom: 1px solid #e9eef4;
+          position: sticky;
+          top: 0;
+          z-index: 30;
         }
 
-        .header-right {
-          display: flex;
-          align-items: center;
-          gap: 16px;
-        }
-
-        .menu-btn {
-          background: none;
-          border: none;
-          cursor: pointer;
-          color: #0f172a;
-        }
-
-        .page-title {
-          font-size: 28px;
-          font-weight: 700;
-          color: #0f172a;
-          margin: 0;
-          letter-spacing: -0.5px;
-        }
-
-        .page-date {
-          font-size: 13px;
-          color: #64748b;
-          margin: 6px 0 0 0;
-        }
-
-        .header-left {
-          display: flex;
-          align-items: center;
-          gap: 14px;
-        }
+        .header-right { display: flex; align-items: center; gap: 16px; }
+        .menu-btn { background: none; border: none; cursor: pointer; padding: 8px; margin: -8px; }
+        .page-title { font-size: 28px; font-weight: 700; color: #0f172a; margin: 0; }
+        .page-date { font-size: 13px; color: #64748b; margin: 6px 0 0 0; }
+        .header-left { display: flex; align-items: center; gap: 14px; }
 
         .icon-btn {
           width: 44px;
@@ -388,7 +277,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           align-items: center;
           justify-content: center;
           color: #64748b;
+          transition: all 0.15s ease;
         }
+
+        .icon-btn:hover { border-color: #cbd5e1; background: #f8fafc; }
 
         .primary-btn {
           display: flex;
@@ -401,16 +293,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           font-size: 14px;
           font-weight: 500;
           text-decoration: none;
+          transition: background 0.15s ease;
         }
 
-        .primary-btn:hover {
-          background: #0369a1;
-        }
+        .primary-btn:hover { background: #0284c7; }
 
-        .main-content {
-          padding: 28px 36px;
-          flex: 1;
-        }
+        .main-content { padding: 28px 36px; flex: 1; }
       `}</style>
     </div>
   )

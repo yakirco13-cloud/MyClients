@@ -1,15 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
 import InvoicesContent from './invoices-content'
 
-export default async function InvoicesPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (!user) {
-    redirect('/login')
-  }
-
-  // Data fetching is now done client-side with caching
+export default function InvoicesPage() {
   return <InvoicesContent />
 }

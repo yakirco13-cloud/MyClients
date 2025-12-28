@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState } from 'react'
+import { AuthProvider } from './auth-provider'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -9,14 +10,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            // Data stays fresh for 5 minutes
-            staleTime: 5 * 60 * 1000,
-            // Keep unused data in cache for 30 minutes
-            gcTime: 30 * 60 * 1000,
-            // Retry failed requests once
-            retry: 1,
-            // Refetch on window focus (when user comes back to tab)
-            refetchOnWindowFocus: true,
+            // Keep data fresh - show cached immediately
+            staleTime: 1000 * 60 * 5, // 5 minutes
+            gcTime: 1000 * 60 * 30, // 30 minutes
+            retry: false,
+            refetchOnWindowFocus: false,
           },
         },
       })
@@ -24,7 +22,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {children}
+      <AuthProvider>
+        {children}
+      </AuthProvider>
     </QueryClientProvider>
   )
 }

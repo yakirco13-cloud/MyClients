@@ -1,6 +1,6 @@
 'use client'
 
-import { Users, Calendar, TrendingUp, Receipt, Plus, FileText, Loader2 } from 'lucide-react'
+import { Users, Calendar, TrendingUp, Receipt, Plus, FileText } from 'lucide-react'
 import Link from 'next/link'
 import { useDashboard } from '@/lib/hooks'
 import { 
@@ -21,28 +21,26 @@ type Event = {
   venue_name?: string
 }
 
-// Color rotation for avatars
 const colors = ['#3b82f6', '#eab308', '#10b981', '#8b5cf6']
 const bgColors = ['#eff6ff', '#fefce8', '#ecfdf5', '#f5f3ff']
 
 export default function DashboardContent() {
-  const { data, isLoading, error } = useDashboard()
+  const { data, isLoading } = useDashboard()
 
-  if (isLoading) {
+  // Show skeleton only on first load (no cached data)
+  if (isLoading && !data) {
     return <DashboardSkeleton />
   }
 
-  if (error) {
-    return (
-      <div style={{ textAlign: 'center', padding: '60px', color: '#ef4444' }}>
-        שגיאה בטעינת הנתונים. נסה לרענן את הדף.
-      </div>
-    )
-  }
+  // Use cached data or defaults
+  const {
+    totalClients = 0,
+    activeClients = 0,
+    upcomingEvents = [],
+    monthRevenue = 0,
+    pendingInvoices = 0,
+  } = data || {}
 
-  const { totalClients, activeClients, upcomingEvents, monthRevenue, pendingInvoices } = data!
-
-  // Table columns definition
   const eventColumns: Column<Event>[] = [
     {
       key: 'client',
@@ -82,104 +80,90 @@ export default function DashboardContent() {
       render: (event) => {
         const daysUntil = Math.ceil((new Date(event.event_date).getTime() - Date.now()) / 86400000)
         const label = daysUntil === 0 ? 'היום!' : daysUntil === 1 ? 'מחר' : `בעוד ${daysUntil} ימים`
-        return (
-          <BadgeCell 
-            label={label} 
-            variant={daysUntil <= 7 ? 'error' : 'success'} 
-          />
-        )
+        return <BadgeCell label={label} variant={daysUntil <= 7 ? 'error' : 'success'} />
       },
     },
   ]
 
   return (
-    <div className="dashboard-grid">
-      {/* Main Column */}
-      <div className="main-column">
-        {/* Stats */}
-        <StatsGrid columns={3}>
-          <StatCard
-            label="לקוחות פעילים"
-            value={totalClients}
-            icon={<Users size={22} color="#3b82f6" />}
-            iconBg="#eff6ff"
-            trend={{ value: '12%', positive: true }}
-            subtitle={`${activeClients} פעילים`}
-          />
-          <StatCard
-            label="אירועים קרובים"
-            value={upcomingEvents.length}
-            icon={<Calendar size={22} color="#eab308" />}
-            iconBg="#fefce8"
-            subtitle="ב-30 הימים הקרובים"
-          />
-          <StatCard
-            label="הכנסות החודש"
-            value={`₪${monthRevenue.toLocaleString()}`}
-            icon={<TrendingUp size={22} color="#10b981" />}
-            iconBg="#ecfdf5"
-            trend={{ value: '23%', positive: true }}
-            subtitle="מהחודש שעבר"
-          />
-        </StatsGrid>
+    <div className="dashboard-page">
+      <div className="dashboard-grid">
+        <div className="main-column">
+          <StatsGrid columns={3}>
+            <StatCard
+              label="לקוחות פעילים"
+              value={totalClients}
+              icon={<Users size={22} color="#3b82f6" />}
+              iconBg="#eff6ff"
+              subtitle={`${activeClients} פעילים`}
+            />
+            <StatCard
+              label="אירועים קרובים"
+              value={upcomingEvents.length}
+              icon={<Calendar size={22} color="#eab308" />}
+              iconBg="#fefce8"
+              subtitle="ב-30 הימים הקרובים"
+            />
+            <StatCard
+              label="הכנסות החודש"
+              value={`₪${monthRevenue.toLocaleString()}`}
+              icon={<TrendingUp size={22} color="#10b981" />}
+              iconBg="#ecfdf5"
+              subtitle="מהחודש שעבר"
+            />
+          </StatsGrid>
 
-        {/* Events Table */}
-        <div className="card">
-          <div className="card-header">
-            <h3>אירועים קרובים</h3>
-            <Link href="/dashboard/clients" className="link">צפה בהכל ←</Link>
-          </div>
-          
-          <DataTable
-            columns={eventColumns}
-            data={upcomingEvents}
-            keyExtractor={(event) => event.id}
-            onRowClick={(event) => {
-              window.location.href = `/dashboard/clients/${event.id}`
-            }}
-            emptyState={
-              <EmptyState
-                icon={<Calendar size={48} />}
-                title="אין אירועים קרובים"
-                description="אירועים חדשים יופיעו כאן"
-              />
-            }
-          />
-        </div>
-      </div>
-
-      {/* Sidebar */}
-      <div className="sidebar-column">
-        {/* Pending Invoices */}
-        <div className="pending-card">
-          <h3>חשבוניות ממתינות</h3>
-          <div className="pending-box">
-            <div className="pending-number">{pendingInvoices}</div>
-            <span>ממתינות לתשלום</span>
+          <div className="card">
+            <div className="card-header">
+              <h3>אירועים קרובים</h3>
+              <Link href="/dashboard/clients" className="link">צפה בהכל ←</Link>
+            </div>
+            
+            <DataTable
+              columns={eventColumns}
+              data={upcomingEvents}
+              keyExtractor={(event) => event.id}
+              onRowClick={(event) => {
+                window.location.href = `/dashboard/clients/${event.id}`
+              }}
+              emptyState={
+                <EmptyState
+                  icon={<Calendar size={48} />}
+                  title="אין אירועים קרובים"
+                  description="אירועים חדשים יופיעו כאן"
+                />
+              }
+            />
           </div>
         </div>
 
-        {/* Quick Actions */}
-        <div className="quick-actions">
-          <h3>פעולות מהירות</h3>
-          <QuickActionLink href="/dashboard/clients" icon={<Plus size={18} />}>
-            הוסף לקוח חדש
-          </QuickActionLink>
-          <QuickActionLink href="/dashboard/invoices" icon={<FileText size={18} />}>
-            צור חשבונית
-          </QuickActionLink>
-          <QuickActionLink href="/dashboard/expenses" icon={<Receipt size={18} />}>
-            הוסף הוצאה
-          </QuickActionLink>
+        <div className="sidebar-column">
+          <div className="pending-card">
+            <h3>חשבוניות ממתינות</h3>
+            <div className="pending-box">
+              <div className="pending-number">{pendingInvoices}</div>
+              <span>ממתינות לתשלום</span>
+            </div>
+          </div>
+
+          <div className="quick-actions">
+            <h3>פעולות מהירות</h3>
+            <QuickLink href="/dashboard/clients" icon={<Plus size={18} />}>הוסף לקוח חדש</QuickLink>
+            <QuickLink href="/dashboard/invoices" icon={<FileText size={18} />}>צור חשבונית</QuickLink>
+            <QuickLink href="/dashboard/expenses" icon={<Receipt size={18} />}>הוסף הוצאה</QuickLink>
+          </div>
         </div>
       </div>
 
       <style jsx>{`
+        .dashboard-page {
+          animation: fadeIn 0.2s ease;
+        }
         .dashboard-grid {
           display: flex;
           gap: 28px;
         }
-        .main-column { flex: 1; }
+        .main-column { flex: 1; min-width: 0; }
         .sidebar-column { width: 300px; flex-shrink: 0; }
         
         .card {
@@ -258,49 +242,20 @@ export default function DashboardContent() {
         }
         
         @media (max-width: 1024px) {
-          .dashboard-grid {
-            flex-direction: column;
-          }
-          .sidebar-column {
-            width: 100%;
-          }
+          .dashboard-grid { flex-direction: column; }
+          .sidebar-column { width: 100%; }
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>
   )
 }
 
-// Loading skeleton
-function DashboardSkeleton() {
-  return (
-    <div style={{ display: 'flex', gap: '28px' }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '28px' }}>
-          {[1, 2, 3].map(i => (
-            <div key={i} style={{ background: '#fff', borderRadius: '16px', padding: '24px', border: '1px solid #e9eef4' }}>
-              <div style={{ height: '16px', width: '100px', background: '#f1f5f9', borderRadius: '4px', marginBottom: '16px' }} />
-              <div style={{ height: '36px', width: '80px', background: '#f1f5f9', borderRadius: '4px' }} />
-            </div>
-          ))}
-        </div>
-        <div style={{ background: '#fff', borderRadius: '16px', padding: '28px', border: '1px solid #e9eef4' }}>
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
-            <Loader2 size={32} color="#0ea5e9" style={{ animation: 'spin 1s linear infinite' }} />
-          </div>
-        </div>
-      </div>
-      <div style={{ width: '300px' }}>
-        <div style={{ background: '#fff', borderRadius: '16px', padding: '24px', border: '1px solid #e9eef4', marginBottom: '24px' }}>
-          <div style={{ height: '100px', background: '#f1f5f9', borderRadius: '8px' }} />
-        </div>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-    </div>
-  )
-}
-
-// Quick action link component
-function QuickActionLink({ href, icon, children }: { href: string; icon: React.ReactNode; children: React.ReactNode }) {
+function QuickLink({ href, icon, children }: { href: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <Link href={href} style={{
       display: 'flex',
@@ -315,9 +270,72 @@ function QuickActionLink({ href, icon, children }: { href: string; icon: React.R
       textDecoration: 'none',
       marginBottom: '10px',
       border: '1px solid rgba(255,255,255,0.1)',
+      transition: 'background 0.15s ease',
     }}>
       {icon}
       {children}
     </Link>
+  )
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="skeleton">
+      <div style={{ display: 'flex', gap: '28px' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '28px' }}>
+            {[1, 2, 3].map(i => (
+              <div key={i} className="skeleton-card">
+                <div className="shimmer" style={{ width: '100px', height: '14px', marginBottom: '16px' }} />
+                <div className="shimmer" style={{ width: '80px', height: '32px' }} />
+              </div>
+            ))}
+          </div>
+          <div className="skeleton-card" style={{ padding: '28px' }}>
+            <div className="shimmer" style={{ width: '150px', height: '20px', marginBottom: '24px' }} />
+            {[1, 2, 3].map(i => (
+              <div key={i} style={{ display: 'flex', gap: '16px', padding: '16px 0', borderBottom: '1px solid #f1f5f9' }}>
+                <div className="shimmer" style={{ width: '44px', height: '44px', borderRadius: '10px' }} />
+                <div style={{ flex: 1 }}>
+                  <div className="shimmer" style={{ width: '140px', height: '14px', marginBottom: '8px' }} />
+                  <div className="shimmer" style={{ width: '80px', height: '12px' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ width: '300px' }}>
+          <div className="skeleton-card" style={{ marginBottom: '24px' }}>
+            <div className="shimmer" style={{ width: '120px', height: '14px', marginBottom: '20px' }} />
+            <div style={{ background: '#fefce8', borderRadius: '12px', padding: '20px', textAlign: 'center' }}>
+              <div className="shimmer" style={{ width: '60px', height: '32px', margin: '0 auto' }} />
+            </div>
+          </div>
+        </div>
+      </div>
+      <style jsx>{`
+        .skeleton { animation: fadeIn 0.2s ease; }
+        .skeleton-card {
+          background: #fff;
+          border-radius: 16px;
+          padding: 24px;
+          border: 1px solid #e9eef4;
+        }
+        .shimmer {
+          background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%);
+          background-size: 200% 100%;
+          animation: shimmer 1.5s infinite;
+          border-radius: 6px;
+        }
+        @keyframes shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+      `}</style>
+    </div>
   )
 }
