@@ -10,11 +10,6 @@ export default async function ClientsPage() {
     redirect('/login')
   }
 
-  const { data: clients } = await supabase
-    .from('clients')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-
-  return <ClientsContent clients={clients || []} />
+  // Data fetching is now done client-side with caching
+  return <ClientsContent />
 }

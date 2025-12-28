@@ -3,9 +3,9 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Plus, Users, Eye, Edit, Trash2, MoreVertical } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
+import { Plus, Users, Eye, Edit, Trash2, MoreVertical, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { useClients, useAddClient, useDeleteClient, type Client } from '@/lib/hooks'
 import { 
   StatCard, 
   StatsGrid, 
@@ -21,24 +21,6 @@ import {
   Button,
   type Column
 } from '@/components/shared'
-
-type Client = {
-  id: string
-  name: string
-  partner_name?: string
-  phone?: string
-  email?: string
-  event_date?: string
-  venue_name?: string
-  status: string
-  total_amount?: number
-  amount_paid?: number
-  created_at: string
-}
-
-type Props = {
-  clients: Client[]
-}
 
 // Color rotation for avatars
 const colors = ['#3b82f6', '#eab308', '#10b981', '#8b5cf6', '#f97316']
@@ -63,9 +45,11 @@ const getStatusLabel = (status: string) => {
   }
 }
 
-export default function ClientsContent({ clients: initialClients }: Props) {
+export default function ClientsContent() {
   const router = useRouter()
-  const [clients, setClients] = useState(initialClients)
+  const { data: clients = [], isLoading, error } = useClients()
+  const deleteClient = useDeleteClient()
+  
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [showAddModal, setShowAddModal] = useState(false)
@@ -86,12 +70,7 @@ export default function ClientsContent({ clients: initialClients }: Props) {
     if (!confirm('האם למחוק לקוח זה?')) return
     
     try {
-      const supabase = createClient()
-      const { error } = await supabase.from('clients').delete().eq('id', id)
-      
-      if (error) throw error
-      
-      setClients(clients.filter(c => c.id !== id))
+      await deleteClient.mutateAsync(id)
       toast.success('הלקוח נמחק בהצלחה')
     } catch (error) {
       toast.error('שגיאה במחיקת הלקוח')
@@ -188,6 +167,18 @@ export default function ClientsContent({ clients: initialClients }: Props) {
     },
   ]
 
+  if (isLoading) {
+    return <ClientsSkeleton />
+  }
+
+  if (error) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px', color: '#ef4444' }}>
+        שגיאה בטעינת הנתונים. נסה לרענן את הדף.
+      </div>
+    )
+  }
+
   return (
     <div>
       {/* Stats */}
@@ -244,11 +235,27 @@ export default function ClientsContent({ clients: initialClients }: Props) {
       <AddClientModal 
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)} 
-        onSuccess={(newClient) => {
-          setClients([newClient, ...clients])
-          setShowAddModal(false)
-        }} 
       />
+    </div>
+  )
+}
+
+// Loading skeleton
+function ClientsSkeleton() {
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '28px' }}>
+        {[1, 2, 3].map(i => (
+          <div key={i} style={{ background: '#fff', borderRadius: '12px', padding: '20px', border: '1px solid #e9eef4' }}>
+            <div style={{ height: '16px', width: '100px', background: '#f1f5f9', borderRadius: '4px', marginBottom: '12px' }} />
+            <div style={{ height: '28px', width: '60px', background: '#f1f5f9', borderRadius: '4px' }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ background: '#fff', borderRadius: '16px', padding: '40px', border: '1px solid #e9eef4', textAlign: 'center' }}>
+        <Loader2 size={32} color="#0ea5e9" style={{ animation: 'spin 1s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
     </div>
   )
 }
@@ -327,12 +334,11 @@ function DropdownMenu({ clientId, onDelete, onClose }: {
 }
 
 // Add Client Modal Component
-function AddClientModal({ isOpen, onClose, onSuccess }: { 
+function AddClientModal({ isOpen, onClose }: { 
   isOpen: boolean
   onClose: () => void
-  onSuccess: (client: Client) => void 
 }) {
-  const [loading, setLoading] = useState(false)
+  const addClient = useAddClient()
   const [formData, setFormData] = useState({
     name: '',
     partner_name: '',
@@ -345,27 +351,17 @@ function AddClientModal({ isOpen, onClose, onSuccess }: {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
 
     try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      
-      if (!user) throw new Error('Not authenticated')
-
-      const { data, error } = await supabase.from('clients').insert({
-        user_id: user.id,
+      await addClient.mutateAsync({
         name: formData.name,
-        partner_name: formData.partner_name || null,
-        phone: formData.phone || null,
-        email: formData.email || null,
-        event_date: formData.event_date || null,
-        venue_name: formData.venue_name || null,
+        partner_name: formData.partner_name || undefined,
+        phone: formData.phone || undefined,
+        email: formData.email || undefined,
+        event_date: formData.event_date || undefined,
+        venue_name: formData.venue_name || undefined,
         status: 'active',
-      }).select().single()
-
-      if (error) throw error
-      if (!data) throw new Error('No data returned')
+      })
 
       toast.success('הלקוח נוסף בהצלחה!')
       
@@ -380,12 +376,10 @@ function AddClientModal({ isOpen, onClose, onSuccess }: {
         total_amount: '',
       })
       
-      onSuccess(data)
+      onClose()
     } catch (error) {
       console.error('Error adding client:', error)
       toast.error('שגיאה בהוספת לקוח')
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -447,7 +441,7 @@ function AddClientModal({ isOpen, onClose, onSuccess }: {
         </div>
 
         <FormActions>
-          <Button type="submit" loading={loading}>
+          <Button type="submit" loading={addClient.isPending}>
             שמור לקוח
           </Button>
           <Button type="button" variant="secondary" onClick={onClose}>

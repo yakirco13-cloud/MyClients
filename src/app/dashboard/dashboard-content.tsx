@@ -1,7 +1,8 @@
 'use client'
 
-import { Users, Calendar, TrendingUp, Receipt, Plus, FileText } from 'lucide-react'
+import { Users, Calendar, TrendingUp, Receipt, Plus, FileText, Loader2 } from 'lucide-react'
 import Link from 'next/link'
+import { useDashboard } from '@/lib/hooks'
 import { 
   StatCard, 
   StatsGrid, 
@@ -20,26 +21,27 @@ type Event = {
   venue_name?: string
 }
 
-type Props = {
-  totalClients: number
-  activeClients: number
-  upcomingEvents: Event[]
-  monthRevenue: number
-  pendingInvoices: number
-}
-
 // Color rotation for avatars
 const colors = ['#3b82f6', '#eab308', '#10b981', '#8b5cf6']
 const bgColors = ['#eff6ff', '#fefce8', '#ecfdf5', '#f5f3ff']
 
-export default function DashboardContent({ 
-  totalClients, 
-  activeClients, 
-  upcomingEvents, 
-  monthRevenue, 
-  pendingInvoices 
-}: Props) {
-  
+export default function DashboardContent() {
+  const { data, isLoading, error } = useDashboard()
+
+  if (isLoading) {
+    return <DashboardSkeleton />
+  }
+
+  if (error) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px', color: '#ef4444' }}>
+        שגיאה בטעינת הנתונים. נסה לרענן את הדף.
+      </div>
+    )
+  }
+
+  const { totalClients, activeClients, upcomingEvents, monthRevenue, pendingInvoices } = data!
+
   // Table columns definition
   const eventColumns: Column<Event>[] = [
     {
@@ -264,6 +266,35 @@ export default function DashboardContent({
           }
         }
       `}</style>
+    </div>
+  )
+}
+
+// Loading skeleton
+function DashboardSkeleton() {
+  return (
+    <div style={{ display: 'flex', gap: '28px' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '28px' }}>
+          {[1, 2, 3].map(i => (
+            <div key={i} style={{ background: '#fff', borderRadius: '16px', padding: '24px', border: '1px solid #e9eef4' }}>
+              <div style={{ height: '16px', width: '100px', background: '#f1f5f9', borderRadius: '4px', marginBottom: '16px' }} />
+              <div style={{ height: '36px', width: '80px', background: '#f1f5f9', borderRadius: '4px' }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ background: '#fff', borderRadius: '16px', padding: '28px', border: '1px solid #e9eef4' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+            <Loader2 size={32} color="#0ea5e9" style={{ animation: 'spin 1s linear infinite' }} />
+          </div>
+        </div>
+      </div>
+      <div style={{ width: '300px' }}>
+        <div style={{ background: '#fff', borderRadius: '16px', padding: '24px', border: '1px solid #e9eef4', marginBottom: '24px' }}>
+          <div style={{ height: '100px', background: '#f1f5f9', borderRadius: '8px' }} />
+        </div>
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   )
 }

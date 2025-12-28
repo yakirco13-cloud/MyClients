@@ -5,8 +5,8 @@ import {
   Upload, Receipt, Plus, Trash2, Loader2, Sparkles, 
   Cloud, CloudOff
 } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
+import { useExpenses, useAddExpense, useDeleteExpense, useSyncExpense, type Expense } from '@/lib/hooks'
 import { 
   StatCard, 
   StatsGrid, 
@@ -23,24 +23,6 @@ import {
   type Column
 } from '@/components/shared'
 
-type Expense = {
-  id: string
-  vendor_name: string
-  amount: number
-  vat_amount?: number
-  expense_date: string
-  category?: string
-  description?: string
-  receipt_url?: string
-  green_invoice_synced?: boolean
-  created_at: string
-}
-
-type Props = {
-  expenses: Expense[]
-  monthTotal: number
-}
-
 const CATEGORIES = [
   { value: 'ציוד', label: 'ציוד' },
   { value: 'תוכנה', label: 'תוכנה' },
@@ -51,14 +33,32 @@ const CATEGORIES = [
   { value: 'אחר', label: 'אחר' },
 ]
 
-export default function ExpensesContent({ expenses: initialExpenses, monthTotal }: Props) {
+export default function ExpensesContent() {
+  const { data, isLoading, error } = useExpenses()
+  const addExpense = useAddExpense()
+  const deleteExpense = useDeleteExpense()
+  const syncExpense = useSyncExpense()
+  
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [expenses, setExpenses] = useState(initialExpenses)
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [showAddModal, setShowAddModal] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scannedData, setScannedData] = useState<Partial<Expense> | null>(null)
+
+  if (isLoading) {
+    return <ExpensesSkeleton />
+  }
+
+  if (error) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px', color: '#ef4444' }}>
+        שגיאה בטעינת הנתונים. נסה לרענן את הדף.
+      </div>
+    )
+  }
+
+  const { expenses, monthTotal } = data!
 
   const filteredExpenses = expenses.filter(expense => {
     const matchesSearch = 
@@ -130,72 +130,19 @@ export default function ExpensesContent({ expenses: initialExpenses, monthTotal 
   const handleDelete = async (id: string) => {
     if (!confirm('האם למחוק הוצאה זו?')) return
     
-    const supabase = createClient()
-    await supabase.from('expenses').delete().eq('id', id)
-    setExpenses(expenses.filter(e => e.id !== id))
-    toast.success('ההוצאה נמחקה')
+    try {
+      await deleteExpense.mutateAsync(id)
+      toast.success('ההוצאה נמחקה')
+    } catch (error) {
+      toast.error('שגיאה במחיקת ההוצאה')
+    }
   }
 
   const handleSync = async (expense: Expense) => {
     try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Not authenticated')
-
-      const { data: settings } = await supabase
-        .from('user_settings')
-        .select('*')
-        .eq('user_id', user.id)
-        .single()
-
-      let response
-
-      if (settings?.easycount_connected && settings.easycount_api_key) {
-        response = await fetch('/api/easycount/expense', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            expenseId: expense.id,
-            vendorName: expense.vendor_name,
-            amount: expense.amount,
-            vatAmount: expense.vat_amount,
-            expenseDate: expense.expense_date,
-            description: expense.description,
-            apiKey: settings.easycount_api_key,
-            developerEmail: settings.easycount_developer_email,
-            useSandbox: settings.easycount_use_sandbox,
-          }),
-        })
-      } else if (settings?.green_invoice_connected && settings.green_invoice_api_key) {
-        response = await fetch('/api/green-invoice/expense', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            expenseId: expense.id,
-            vendor_name: expense.vendor_name,
-            amount: expense.amount,
-            vat_amount: expense.vat_amount,
-            expense_date: expense.expense_date,
-            description: expense.description,
-          }),
-        })
-      } else {
-        toast.error('אין מערכת חשבוניות מחוברת. חבר מערכת בהגדרות.')
-        return
-      }
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Sync failed')
-      }
-
-      setExpenses(expenses.map(e => 
-        e.id === expense.id ? { ...e, green_invoice_synced: true } : e
-      ))
-
+      await syncExpense.mutateAsync(expense)
       toast.success('ההוצאה סונכרנה בהצלחה!')
     } catch (error) {
-      console.error('Sync error:', error)
       toast.error(error instanceof Error ? error.message : 'שגיאה בסנכרון ההוצאה')
     }
   }
@@ -289,6 +236,7 @@ export default function ExpensesContent({ expenses: initialExpenses, monthTotal 
               e.stopPropagation()
               handleSync(expense)
             }}
+            disabled={syncExpense.isPending}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -393,11 +341,28 @@ export default function ExpensesContent({ expenses: initialExpenses, monthTotal 
         initialData={scannedData}
         scanning={scanning}
         onClose={closeModal}
-        onSuccess={(expense) => {
-          setExpenses([expense, ...expenses])
-          closeModal()
-        }}
       />
+    </div>
+  )
+}
+
+// Loading skeleton
+function ExpensesSkeleton() {
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '28px' }}>
+        {[1, 2, 3].map(i => (
+          <div key={i} style={{ background: '#fff', borderRadius: '12px', padding: '20px', border: '1px solid #e9eef4' }}>
+            <div style={{ height: '16px', width: '100px', background: '#f1f5f9', borderRadius: '4px', marginBottom: '12px' }} />
+            <div style={{ height: '28px', width: '80px', background: '#f1f5f9', borderRadius: '4px' }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)', borderRadius: '16px', padding: '28px', marginBottom: '28px', height: '100px' }} />
+      <div style={{ background: '#fff', borderRadius: '16px', padding: '40px', border: '1px solid #e9eef4', textAlign: 'center' }}>
+        <Loader2 size={32} color="#0ea5e9" style={{ animation: 'spin 1s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
     </div>
   )
 }
@@ -463,14 +428,13 @@ function AIScanBanner({ fileInputRef, onFileSelect }: {
 }
 
 // Add Expense Modal Component
-function AddExpenseModal({ isOpen, initialData, scanning, onClose, onSuccess }: {
+function AddExpenseModal({ isOpen, initialData, scanning, onClose }: {
   isOpen: boolean
   initialData: Partial<Expense> | null
   scanning: boolean
   onClose: () => void
-  onSuccess: (expense: Expense) => void
 }) {
-  const [loading, setLoading] = useState(false)
+  const addExpense = useAddExpense()
   const [formData, setFormData] = useState({
     vendor_name: '',
     amount: '',
@@ -496,34 +460,22 @@ function AddExpenseModal({ isOpen, initialData, scanning, onClose, onSuccess }: 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
 
     try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      
-      if (!user) throw new Error('Not authenticated')
-
-      const { data, error } = await supabase.from('expenses').insert({
-        user_id: user.id,
+      await addExpense.mutateAsync({
         vendor_name: formData.vendor_name,
         amount: parseFloat(formData.amount) || 0,
-        vat_amount: formData.vat_amount ? parseFloat(formData.vat_amount) : null,
+        vat_amount: formData.vat_amount ? parseFloat(formData.vat_amount) : undefined,
         expense_date: formData.expense_date,
         category: formData.category,
-        description: formData.description || null,
-      }).select().single()
-
-      if (error) throw error
-      if (!data) throw new Error('No data returned')
+        description: formData.description || undefined,
+      })
 
       toast.success('ההוצאה נוספה בהצלחה!')
-      onSuccess(data)
+      onClose()
     } catch (error) {
       console.error('Error adding expense:', error)
       toast.error('שגיאה בהוספת הוצאה')
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -607,7 +559,7 @@ function AddExpenseModal({ isOpen, initialData, scanning, onClose, onSuccess }: 
         </div>
 
         <FormActions>
-          <Button type="submit" loading={loading}>
+          <Button type="submit" loading={addExpense.isPending}>
             שמור הוצאה
           </Button>
           <Button type="button" variant="secondary" onClick={onClose}>

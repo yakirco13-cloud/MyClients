@@ -4,8 +4,9 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { 
   TrendingUp, CheckCircle, Clock, FileText, 
-  Download, Eye, Receipt 
+  Download, Eye, Receipt, Loader2
 } from 'lucide-react'
+import { useInvoices, type Invoice } from '@/lib/hooks'
 import { 
   StatCard, 
   StatsGrid, 
@@ -18,28 +19,6 @@ import {
   EmptyState,
   type Column
 } from '@/components/shared'
-
-type Invoice = {
-  id: string
-  invoice_number?: string
-  amount: number
-  status: string
-  description?: string
-  green_invoice_id?: string
-  green_invoice_url?: string
-  created_at: string
-  client_id?: string
-  clients?: {
-    name: string
-    partner_name?: string
-  }
-}
-
-type Props = {
-  invoices: Invoice[]
-  monthTotal: number
-  totalPaid: number
-}
 
 // Color rotation for avatars
 const colors = ['#3b82f6', '#eab308', '#10b981', '#8b5cf6', '#f97316']
@@ -64,9 +43,24 @@ const getStatusLabel = (status: string) => {
   }
 }
 
-export default function InvoicesContent({ invoices, monthTotal, totalPaid }: Props) {
+export default function InvoicesContent() {
+  const { data, isLoading, error } = useInvoices()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+
+  if (isLoading) {
+    return <InvoicesSkeleton />
+  }
+
+  if (error) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px', color: '#ef4444' }}>
+        שגיאה בטעינת הנתונים. נסה לרענן את הדף.
+      </div>
+    )
+  }
+
+  const { invoices, monthTotal, totalPaid } = data!
 
   const filteredInvoices = invoices.filter(invoice => {
     const clientName = invoice.clients?.name || ''
@@ -268,6 +262,26 @@ export default function InvoicesContent({ invoices, monthTotal, totalPaid }: Pro
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Loading skeleton
+function InvoicesSkeleton() {
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '28px' }}>
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} style={{ background: '#fff', borderRadius: '12px', padding: '20px', border: '1px solid #e9eef4' }}>
+            <div style={{ height: '16px', width: '100px', background: '#f1f5f9', borderRadius: '4px', marginBottom: '12px' }} />
+            <div style={{ height: '28px', width: '80px', background: '#f1f5f9', borderRadius: '4px' }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ background: '#fff', borderRadius: '16px', padding: '40px', border: '1px solid #e9eef4', textAlign: 'center' }}>
+        <Loader2 size={32} color="#0ea5e9" style={{ animation: 'spin 1s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
     </div>
   )
 }
