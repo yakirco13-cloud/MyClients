@@ -48,10 +48,11 @@ function normalizeText(text: string): string {
     .replace(/[\u0591-\u05C7]/g, '')
 }
 
-export default function MeetingContent({ client, songs, selectedSongIds: initialSelected }: Props) {
+export default function MeetingContent({ client, songs: initialSongs, selectedSongIds: initialSelected }: Props) {
   const router = useRouter()
   const searchRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const [songs, setSongs] = useState(initialSongs)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelected))
   const [filterGenre, setFilterGenre] = useState<string>('all')
@@ -60,6 +61,54 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
   const [showFilters, setShowFilters] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(0)
   const [isNavigating, setIsNavigating] = useState(false) // Track if user is navigating with arrows
+  const [searching, setSearching] = useState(false)
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Database search function
+  const searchDatabase = async (query: string) => {
+    setSearching(true)
+    try {
+      const supabase = createClient()
+      
+      if (!query.trim()) {
+        // No search - load first 500 songs
+        const { data } = await supabase
+          .from('songs')
+          .select('*')
+          .order('title')
+          .limit(500)
+        
+        if (data) setSongs(data)
+      } else {
+        // Search with ilike
+        const { data } = await supabase
+          .from('songs')
+          .select('*')
+          .or(`title.ilike.%${query}%,artist.ilike.%${query}%,album.ilike.%${query}%`)
+          .order('title')
+          .limit(500)
+        
+        if (data) setSongs(data)
+      }
+    } catch (error) {
+      console.error('Search error:', error)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  // Debounced search handler
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value)
+    
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+    
+    searchTimeoutRef.current = setTimeout(() => {
+      searchDatabase(value)
+    }, 300)
+  }
 
   // Focus search on load
   useEffect(() => {
@@ -73,23 +122,9 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
     return Array.from(g).sort()
   }, [songs])
 
-  // Filter songs with improved Hebrew search
+  // Filter songs - search is done by database, only apply genre/BPM filters locally
   const filteredSongs = useMemo(() => {
     return songs.filter(song => {
-      // Search filter with Hebrew normalization
-      const query = normalizeText(searchQuery)
-      if (!query) {
-        // No search query - only apply other filters
-      } else {
-        const titleMatch = normalizeText(song.title).includes(query)
-        const artistMatch = normalizeText(song.artist || '').includes(query)
-        const albumMatch = normalizeText(song.album || '').includes(query)
-        
-        if (!titleMatch && !artistMatch && !albumMatch) {
-          return false
-        }
-      }
-      
       // Genre filter
       const matchesGenre = filterGenre === 'all' || song.genre === filterGenre
       
@@ -107,7 +142,7 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
       
       return matchesGenre && matchesBpm
     })
-  }, [songs, searchQuery, filterGenre, filterBpm])
+  }, [songs, filterGenre, filterBpm])
 
   // Reset highlighted index and navigation mode when search changes
   useEffect(() => {
@@ -178,7 +213,7 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
       
       // Escape - clear search
       if (e.key === 'Escape') {
-        setSearchQuery('')
+        handleSearchChange('')
         setIsNavigating(false)
         searchRef.current?.focus()
       }
@@ -208,7 +243,7 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
 
     // Clear search and refocus if requested
     if (clearSearch) {
-      setSearchQuery('')
+      handleSearchChange('')
       setHighlightedIndex(0)
       setTimeout(() => searchRef.current?.focus(), 10)
     }
@@ -423,7 +458,7 @@ ${path}`
               type="text"
               placeholder="הקלד שם שיר... (↑↓ לניווט, רווח לבחירה)"
               value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              onChange={e => handleSearchChange(e.target.value)}
               style={{
                 width: '100%',
                 padding: '14px 48px 14px 14px',
@@ -437,10 +472,23 @@ ${path}`
                 transition: 'border-color 0.2s',
               }}
             />
+            {searching && (
+              <Loader2 
+                size={18} 
+                color="#94a3b8" 
+                style={{ 
+                  position: 'absolute', 
+                  left: searchQuery ? '44px' : '14px', 
+                  top: '50%', 
+                  transform: 'translateY(-50%)',
+                  animation: 'spin 1s linear infinite'
+                }} 
+              />
+            )}
             {searchQuery && (
               <button
                 onClick={() => {
-                  setSearchQuery('')
+                  handleSearchChange('')
                   searchRef.current?.focus()
                 }}
                 style={{
