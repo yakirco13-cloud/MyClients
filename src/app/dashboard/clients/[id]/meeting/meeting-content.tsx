@@ -541,7 +541,7 @@ ${path}`
   }
 
   const selectedSongs = songs.filter(s => selectedIds.has(s.id))
-      URL.revokeObjectURL(url)
+
   return (
     <div style={{ 
       minHeight: '100vh', 
