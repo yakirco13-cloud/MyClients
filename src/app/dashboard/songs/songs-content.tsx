@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { 
   Music, Upload, Search, Trash2, Loader2, 
@@ -36,38 +36,83 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
   const [deleting, setDeleting] = useState<string | null>(null)
   const [searching, setSearching] = useState(false)
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [artistFilter, setArtistFilter] = useState<string>('all')
+  const [artists, setArtists] = useState<string[]>([])
 
-  // Search database when query changes
-  const searchDatabase = async (query: string) => {
+  // Load unique artists on mount
+  useEffect(() => {
+    const loadArtists = async () => {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('songs')
+        .select('artist')
+        .not('artist', 'is', null)
+        .not('artist', 'eq', '')
+      
+      if (data) {
+        const uniqueArtists = [...new Set(data.map(s => s.artist).filter(Boolean))] as string[]
+        uniqueArtists.sort((a, b) => a.localeCompare(b, 'he'))
+        setArtists(uniqueArtists)
+      }
+    }
+    loadArtists()
+  }, [])
+
+  // Get popularity counts (how many times each song was picked)
+  const [popularityCounts, setPopularityCounts] = useState<Map<string, number>>(new Map())
+  
+  useEffect(() => {
+    const loadPopularity = async () => {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('client_songs')
+        .select('song_id')
+      
+      if (data) {
+        const counts = new Map<string, number>()
+        for (const row of data) {
+          counts.set(row.song_id, (counts.get(row.song_id) || 0) + 1)
+        }
+        setPopularityCounts(counts)
+      }
+    }
+    loadPopularity()
+  }, [])
+
+  // Search database when query or artist filter changes
+  const searchDatabase = async (query: string, artist: string = artistFilter) => {
     setSearching(true)
     try {
       const supabase = createClient()
       
-      if (!query.trim()) {
-        // No search - load first 500 songs
-        const { data, count } = await supabase
-          .from('songs')
-          .select('*', { count: 'exact' })
-          .order('title')
-          .limit(500)
-        
-        if (data) {
-          setSongs(data)
-          setTotalCount(count || data.length)
-        }
-      } else {
-        // Search with ilike
-        const { data, count } = await supabase
-          .from('songs')
-          .select('*', { count: 'exact' })
-          .or(`title.ilike.%${query}%,artist.ilike.%${query}%`)
-          .order('title')
-          .limit(500)
-        
-        if (data) {
-          setSongs(data)
-          setTotalCount(count || data.length)
-        }
+      let queryBuilder = supabase
+        .from('songs')
+        .select('*', { count: 'exact' })
+      
+      // Apply artist filter
+      if (artist !== 'all') {
+        queryBuilder = queryBuilder.eq('artist', artist)
+      }
+      
+      // Apply search
+      if (query.trim()) {
+        queryBuilder = queryBuilder.or(`title.ilike.%${query}%,artist.ilike.%${query}%`)
+      }
+      
+      const { data, count } = await queryBuilder
+        .order('title')
+        .limit(500)
+      
+      if (data) {
+        // Sort by popularity (most picked first)
+        const sortedData = [...data].sort((a, b) => {
+          const countA = popularityCounts.get(a.id) || 0
+          const countB = popularityCounts.get(b.id) || 0
+          if (countB !== countA) return countB - countA
+          return a.title.localeCompare(b.title, 'he')
+        })
+        setSongs(sortedData)
+        setTotalCount(count || data.length)
       }
     } catch (error) {
       console.error('Search error:', error)
@@ -87,6 +132,12 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
     searchTimeoutRef.current = setTimeout(() => {
       searchDatabase(value)
     }, 300)
+  }
+
+  // Handle artist filter change
+  const handleArtistChange = (artist: string) => {
+    setArtistFilter(artist)
+    searchDatabase(searchQuery, artist)
   }
 
   // Use songs directly (no local filtering needed)
@@ -388,88 +439,201 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
     }
   }
 
-  // Compare XML with database to find missing songs
-  const [comparing, setComparing] = useState(false)
-  const [compareResult, setCompareResult] = useState<{
-    xmlCount: number
-    dbCount: number
-    missing: Array<{ title: string; artist: string | null }>
-  } | null>(null)
-  const compareInputRef = useRef<HTMLInputElement>(null)
+  // Smart Duplicate Review
+  type DuplicateGroup = {
+    songs: Array<{ id: string; title: string; artist: string | null; created_at: string }>
+    keepIds: Set<string>
+  }
+  
+  const [showDuplicateReview, setShowDuplicateReview] = useState(false)
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([])
+  const [reviewLoading, setReviewLoading] = useState(false)
 
-  const handleCompareXML = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  // Simple similarity function (normalized Levenshtein-like)
+  const getSimilarity = (s1: string, s2: string): number => {
+    const str1 = s1.toLowerCase().trim()
+    const str2 = s2.toLowerCase().trim()
+    
+    if (str1 === str2) return 1
+    if (str1.length === 0 || str2.length === 0) return 0
+    
+    // Check if one contains the other
+    if (str1.includes(str2) || str2.includes(str1)) {
+      const longer = Math.max(str1.length, str2.length)
+      const shorter = Math.min(str1.length, str2.length)
+      return shorter / longer
+    }
+    
+    // Simple character overlap similarity
+    const set1 = new Set(str1.split(''))
+    const set2 = new Set(str2.split(''))
+    const intersection = [...set1].filter(c => set2.has(c)).length
+    const union = new Set([...set1, ...set2]).size
+    return intersection / union
+  }
 
-    setComparing(true)
-    setImportProgress('קורא קובץ XML...')
+  const handleReviewDuplicates = async () => {
+    if (!confirm('לסרוק את הספרייה לשירים דומים? זה עלול לקחת מספר שניות.')) return
+
+    setReviewLoading(true)
+    setImportProgress('סורק שירים דומים...')
 
     try {
-      const text = await file.text()
-      
-      // Parse XML
-      const xmlSongs = parseXMLInBrowser(text)
-      
-      setImportProgress('טוען שירים מהמאגר...')
-      
-      // Get ALL songs from database with pagination
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Not authenticated')
+      if (!user) return
 
-      const dbKeys = new Set<string>()
+      // Get all songs
+      const allSongs: Array<{ id: string; title: string; artist: string | null; created_at: string }> = []
       let page = 0
       const PAGE_SIZE = 1000
-      let totalDbSongs = 0
-      
+
       while (true) {
-        const { data: dbSongs } = await supabase
+        const { data: pageSongs } = await supabase
           .from('songs')
-          .select('title, artist')
+          .select('id, title, artist, created_at')
           .eq('user_id', user.id)
+          .order('title')
           .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
         
-        if (!dbSongs || dbSongs.length === 0) break
-        
-        totalDbSongs += dbSongs.length
-        
-        for (const song of dbSongs) {
-          const key = `${(song.title || '').toLowerCase().trim()}|||${(song.artist || '').toLowerCase().trim()}`
-          dbKeys.add(key)
-        }
-        
-        if (dbSongs.length < PAGE_SIZE) break
+        if (!pageSongs || pageSongs.length === 0) break
+        allSongs.push(...pageSongs)
+        if (pageSongs.length < PAGE_SIZE) break
         page++
       }
 
-      // Find missing songs
-      const missing: Array<{ title: string; artist: string | null }> = []
-      for (const song of xmlSongs) {
-        const key = `${song.title.toLowerCase().trim()}|||${(song.artist || '').toLowerCase().trim()}`
-        if (!dbKeys.has(key)) {
-          missing.push({ title: song.title, artist: song.artist })
+      if (allSongs.length === 0) {
+        toast.info('אין שירים בספרייה')
+        return
+      }
+
+      setImportProgress('מנתח דמיון בין שירים...')
+
+      // Group similar songs
+      const groups: DuplicateGroup[] = []
+      const processed = new Set<string>()
+
+      for (let i = 0; i < allSongs.length; i++) {
+        if (processed.has(allSongs[i].id)) continue
+
+        const similar: typeof allSongs = [allSongs[i]]
+        processed.add(allSongs[i].id)
+
+        for (let j = i + 1; j < allSongs.length; j++) {
+          if (processed.has(allSongs[j].id)) continue
+
+          const similarity = getSimilarity(allSongs[i].title, allSongs[j].title)
+          
+          // 70% similarity threshold
+          if (similarity >= 0.7) {
+            similar.push(allSongs[j])
+            processed.add(allSongs[j].id)
+          }
+        }
+
+        // Only add groups with duplicates
+        if (similar.length > 1) {
+          // Default: keep first one (oldest)
+          const keepIds = new Set<string>([similar[0].id])
+          groups.push({ songs: similar, keepIds })
         }
       }
 
-      setCompareResult({
-        xmlCount: xmlSongs.length,
-        dbCount: totalDbSongs,
-        missing: missing.slice(0, 100), // Show first 100
-      })
-
-      if (missing.length === 0) {
-        toast.success('כל השירים מה-XML קיימים במאגר!')
+      if (groups.length === 0) {
+        toast.success('לא נמצאו שירים דומים!')
+        setShowDuplicateReview(false)
       } else {
-        toast.info(`נמצאו ${missing.length} שירים חסרים`)
+        setDuplicateGroups(groups)
+        setShowDuplicateReview(true)
+        toast.info(`נמצאו ${groups.length} קבוצות של שירים דומים`)
       }
 
     } catch (error) {
-      console.error('Compare error:', error)
-      toast.error('שגיאה בהשוואה')
+      console.error('Review duplicates error:', error)
+      toast.error('שגיאה בסריקת כפילויות')
     } finally {
-      setComparing(false)
+      setReviewLoading(false)
       setImportProgress(null)
-      if (compareInputRef.current) compareInputRef.current.value = ''
+    }
+  }
+
+  const toggleKeepSong = (groupIndex: number, songId: string) => {
+    setDuplicateGroups(prev => {
+      const newGroups = [...prev]
+      const group = newGroups[groupIndex]
+      const newKeepIds = new Set(group.keepIds)
+      
+      if (newKeepIds.has(songId)) {
+        // Don't allow deselecting if it's the last one
+        if (newKeepIds.size > 1) {
+          newKeepIds.delete(songId)
+        }
+      } else {
+        newKeepIds.add(songId)
+      }
+      
+      newGroups[groupIndex] = { ...group, keepIds: newKeepIds }
+      return newGroups
+    })
+  }
+
+  const handleDeleteReviewedDuplicates = async () => {
+    const toDelete: string[] = []
+    
+    for (const group of duplicateGroups) {
+      for (const song of group.songs) {
+        if (!group.keepIds.has(song.id)) {
+          toDelete.push(song.id)
+        }
+      }
+    }
+
+    if (toDelete.length === 0) {
+      toast.info('לא נבחרו שירים למחיקה')
+      return
+    }
+
+    if (!confirm(`למחוק ${toDelete.length} שירים?`)) return
+
+    setReviewLoading(true)
+    setImportProgress(`מוחק ${toDelete.length} שירים...`)
+
+    try {
+      const supabase = createClient()
+      
+      // Delete in batches
+      const BATCH_SIZE = 100
+      for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+        const batch = toDelete.slice(i, i + BATCH_SIZE)
+        await supabase.from('songs').delete().in('id', batch)
+      }
+
+      // Refresh
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data, count } = await supabase
+          .from('songs')
+          .select('*', { count: 'exact' })
+          .eq('user_id', user.id)
+          .order('title')
+          .limit(500)
+        
+        if (data) {
+          setSongs(data)
+          setTotalCount(count || data.length)
+        }
+      }
+
+      toast.success(`נמחקו ${toDelete.length} שירים!`)
+      setShowDuplicateReview(false)
+      setDuplicateGroups([])
+
+    } catch (error) {
+      console.error('Delete error:', error)
+      toast.error('שגיאה במחיקה')
+    } finally {
+      setReviewLoading(false)
+      setImportProgress(null)
     }
   }
 
@@ -495,8 +659,8 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
           {songs.length > 0 && (
             <>
               <button
-                onClick={() => compareInputRef.current?.click()}
-                disabled={importing || comparing}
+                onClick={handleReviewDuplicates}
+                disabled={importing || reviewLoading}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -511,33 +675,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
                 }}
               >
                 <Search size={16} />
-                השווה XML
-              </button>
-              <input
-                ref={compareInputRef}
-                type="file"
-                accept=".xml"
-                onChange={handleCompareXML}
-                style={{ display: 'none' }}
-              />
-              <button
-                onClick={handleDeleteDuplicates}
-                disabled={importing}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '10px 16px',
-                  background: '#fff',
-                  border: '1px solid #fcd34d',
-                  borderRadius: '8px',
-                  color: '#d97706',
-                  fontSize: '14px',
-                  cursor: 'pointer',
-                }}
-              >
-                <RefreshCw size={16} />
-                מחק כפילויות
+                סקור כפילויות
               </button>
               <button
                 onClick={handleDeleteAll}
@@ -673,8 +811,8 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         </div>
       )}
 
-      {/* Compare Results Modal */}
-      {compareResult && (
+      {/* Duplicate Review Modal */}
+      {showDuplicateReview && duplicateGroups.length > 0 && (
         <div style={{
           background: '#fff',
           border: '1px solid #c4b5fd',
@@ -684,57 +822,114 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#0f172a', margin: 0 }}>
-              תוצאות השוואה
+              סקירת שירים דומים ({duplicateGroups.length} קבוצות)
             </h3>
             <button
-              onClick={() => setCompareResult(null)}
+              onClick={() => setShowDuplicateReview(false)}
               style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
             >
               <X size={20} color="#64748b" />
             </button>
           </div>
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
-            <div style={{ background: '#f0f9ff', padding: '16px', borderRadius: '10px', textAlign: 'center' }}>
-              <div style={{ fontSize: '24px', fontWeight: 700, color: '#0ea5e9' }}>{compareResult.xmlCount}</div>
-              <div style={{ fontSize: '13px', color: '#64748b' }}>שירים ב-XML</div>
-            </div>
-            <div style={{ background: '#ecfdf5', padding: '16px', borderRadius: '10px', textAlign: 'center' }}>
-              <div style={{ fontSize: '24px', fontWeight: 700, color: '#10b981' }}>{compareResult.dbCount}</div>
-              <div style={{ fontSize: '13px', color: '#64748b' }}>שירים במאגר</div>
-            </div>
-            <div style={{ background: compareResult.missing.length > 0 ? '#fef2f2' : '#ecfdf5', padding: '16px', borderRadius: '10px', textAlign: 'center' }}>
-              <div style={{ fontSize: '24px', fontWeight: 700, color: compareResult.missing.length > 0 ? '#ef4444' : '#10b981' }}>{compareResult.missing.length}</div>
-              <div style={{ fontSize: '13px', color: '#64748b' }}>שירים חסרים</div>
-            </div>
-          </div>
+          <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
+            סמן את השירים שברצונך לשמור. השירים הלא מסומנים יימחקו.
+          </p>
 
-          {compareResult.missing.length > 0 && (
-            <>
-              <h4 style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a', margin: '0 0 12px' }}>
-                שירים חסרים (עד 100 ראשונים):
-              </h4>
-              <div style={{ maxHeight: '300px', overflowY: 'auto', background: '#f8fafc', borderRadius: '8px', padding: '12px' }}>
-                {compareResult.missing.map((song, i) => (
-                  <div key={i} style={{ 
-                    padding: '8px 0', 
-                    borderBottom: i < compareResult.missing.length - 1 ? '1px solid #e2e8f0' : 'none',
-                    fontSize: '13px',
-                  }}>
-                    <span style={{ fontWeight: 500, color: '#0f172a' }}>{song.title}</span>
-                    {song.artist && <span style={{ color: '#64748b' }}> - {song.artist}</span>}
+          <div style={{ maxHeight: '400px', overflowY: 'auto', marginBottom: '16px' }}>
+            {duplicateGroups.map((group, groupIndex) => (
+              <div key={groupIndex} style={{
+                background: '#f8fafc',
+                borderRadius: '8px',
+                padding: '12px',
+                marginBottom: '12px',
+              }}>
+                <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
+                  קבוצה {groupIndex + 1} - {group.songs.length} שירים דומים
+                </div>
+                {group.songs.map(song => (
+                  <div
+                    key={song.id}
+                    onClick={() => toggleKeepSong(groupIndex, song.id)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '8px',
+                      background: group.keepIds.has(song.id) ? '#ecfdf5' : '#fef2f2',
+                      borderRadius: '6px',
+                      marginBottom: '4px',
+                      cursor: 'pointer',
+                      border: group.keepIds.has(song.id) ? '1px solid #10b981' : '1px solid #fecaca',
+                    }}
+                  >
+                    <div style={{
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '4px',
+                      background: group.keepIds.has(song.id) ? '#10b981' : '#fff',
+                      border: group.keepIds.has(song.id) ? 'none' : '1px solid #d1d5db',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      {group.keepIds.has(song.id) && <Check size={14} color="#fff" />}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '14px', fontWeight: 500, color: '#0f172a' }}>
+                        {song.title}
+                      </div>
+                      {song.artist && (
+                        <div style={{ fontSize: '12px', color: '#64748b' }}>
+                          {song.artist}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
-            </>
-          )}
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setShowDuplicateReview(false)}
+              style={{
+                padding: '10px 20px',
+                background: '#fff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+                color: '#64748b',
+                fontSize: '14px',
+                cursor: 'pointer',
+              }}
+            >
+              ביטול
+            </button>
+            <button
+              onClick={handleDeleteReviewedDuplicates}
+              disabled={reviewLoading}
+              style={{
+                padding: '10px 20px',
+                background: '#ef4444',
+                border: 'none',
+                borderRadius: '8px',
+                color: '#fff',
+                fontSize: '14px',
+                cursor: 'pointer',
+                opacity: reviewLoading ? 0.7 : 1,
+              }}
+            >
+              {reviewLoading ? 'מוחק...' : 'מחק לא מסומנים'}
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Search */}
+      {/* Search and Artist Filter */}
       {songs.length > 0 && (
-        <div style={{ marginBottom: '20px' }}>
-          <div style={{ position: 'relative', maxWidth: '400px' }}>
+        <div style={{ marginBottom: '20px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', maxWidth: '400px', flex: 1 }}>
             <Search 
               size={18} 
               color="#94a3b8" 
@@ -742,7 +937,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
             />
             <input
               type="text"
-              placeholder="חיפוש שיר או אמן..."
+              placeholder="חיפוש שיר..."
               value={searchQuery}
               onChange={e => handleSearchChange(e.target.value)}
               style={{
@@ -768,6 +963,27 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
               />
             )}
           </div>
+          
+          {/* Artist Filter */}
+          <select
+            value={artistFilter}
+            onChange={e => handleArtistChange(e.target.value)}
+            style={{
+              padding: '10px 12px',
+              border: '1px solid #e2e8f0',
+              borderRadius: '8px',
+              fontSize: '14px',
+              outline: 'none',
+              minWidth: '180px',
+              background: '#fff',
+              cursor: 'pointer',
+            }}
+          >
+            <option value="all">כל האמנים</option>
+            {artists.map(artist => (
+              <option key={artist} value={artist}>{artist}</option>
+            ))}
+          </select>
         </div>
       )}
 

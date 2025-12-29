@@ -56,39 +56,121 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelected))
   const [filterGenre, setFilterGenre] = useState<string>('all')
-  const [filterBpm, setFilterBpm] = useState<string>('all')
+  const [filterArtist, setFilterArtist] = useState<string>('all')
   const [saving, setSaving] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(0)
   const [isNavigating, setIsNavigating] = useState(false) // Track if user is navigating with arrows
   const [searching, setSearching] = useState(false)
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [artists, setArtists] = useState<string[]>([])
+  const [popularityCounts, setPopularityCounts] = useState<Map<string, number>>(new Map())
+  
+  // Categories
+  type SongCategory = {
+    id: string
+    name: string
+    color: string
+    order_num: number
+  }
+  const [categories, setCategories] = useState<SongCategory[]>([])
+  const [songCategories, setSongCategories] = useState<Map<string, string>>(new Map()) // song_id -> category_id
+  const [selectedCategory, setSelectedCategory] = useState<string>('') // Current category for new songs
+
+  // Load unique artists, popularity, and categories on mount
+  useEffect(() => {
+    const loadData = async () => {
+      const supabase = createClient()
+      
+      // Load artists
+      const { data: artistData } = await supabase
+        .from('songs')
+        .select('artist')
+        .not('artist', 'is', null)
+        .not('artist', 'eq', '')
+      
+      if (artistData) {
+        const uniqueArtists = [...new Set(artistData.map(s => s.artist).filter(Boolean))] as string[]
+        uniqueArtists.sort((a, b) => a.localeCompare(b, 'he'))
+        setArtists(uniqueArtists)
+      }
+      
+      // Load popularity counts
+      const { data: popularityData } = await supabase
+        .from('client_songs')
+        .select('song_id')
+      
+      if (popularityData) {
+        const counts = new Map<string, number>()
+        for (const row of popularityData) {
+          counts.set(row.song_id, (counts.get(row.song_id) || 0) + 1)
+        }
+        setPopularityCounts(counts)
+      }
+      
+      // Load categories
+      const { data: categoryData } = await supabase
+        .from('song_categories')
+        .select('*')
+        .order('order_num')
+      
+      if (categoryData) {
+        setCategories(categoryData)
+        if (categoryData.length > 0) {
+          setSelectedCategory(categoryData[0].id)
+        }
+      }
+      
+      // Load song-category assignments for this client
+      const { data: songCatData } = await supabase
+        .from('client_song_categories')
+        .select('song_id, category_id')
+        .eq('client_id', client.id)
+      
+      if (songCatData) {
+        const map = new Map<string, string>()
+        for (const row of songCatData) {
+          map.set(row.song_id, row.category_id)
+        }
+        setSongCategories(map)
+      }
+    }
+    loadData()
+  }, [client.id])
 
   // Database search function
-  const searchDatabase = async (query: string) => {
+  const searchDatabase = async (query: string, artist: string = filterArtist) => {
     setSearching(true)
     try {
       const supabase = createClient()
       
-      if (!query.trim()) {
-        // No search - load first 500 songs
-        const { data } = await supabase
-          .from('songs')
-          .select('*')
-          .order('title')
-          .limit(500)
-        
-        if (data) setSongs(data)
-      } else {
-        // Search with ilike
-        const { data } = await supabase
-          .from('songs')
-          .select('*')
-          .or(`title.ilike.%${query}%,artist.ilike.%${query}%,album.ilike.%${query}%`)
-          .order('title')
-          .limit(500)
-        
-        if (data) setSongs(data)
+      let queryBuilder = supabase
+        .from('songs')
+        .select('*')
+      
+      // Apply artist filter
+      if (artist !== 'all') {
+        queryBuilder = queryBuilder.eq('artist', artist)
+      }
+      
+      // Apply search
+      if (query.trim()) {
+        queryBuilder = queryBuilder.or(`title.ilike.%${query}%,artist.ilike.%${query}%,album.ilike.%${query}%`)
+      }
+      
+      const { data } = await queryBuilder
+        .order('title')
+        .limit(500)
+      
+      if (data) {
+        // Sort by popularity (most picked first)
+        const sortedData = [...data].sort((a, b) => {
+          const countA = popularityCounts.get(a.id) || 0
+          const countB = popularityCounts.get(b.id) || 0
+          if (countB !== countA) return countB - countA
+          return a.title.localeCompare(b.title, 'he')
+        })
+        setSongs(sortedData)
       }
     } catch (error) {
       console.error('Search error:', error)
@@ -110,6 +192,12 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
     }, 300)
   }
 
+  // Handle artist filter change
+  const handleArtistChange = (artist: string) => {
+    setFilterArtist(artist)
+    searchDatabase(searchQuery, artist)
+  }
+
   // Focus search on load
   useEffect(() => {
     searchRef.current?.focus()
@@ -122,33 +210,19 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
     return Array.from(g).sort()
   }, [songs])
 
-  // Filter songs - search is done by database, only apply genre/BPM filters locally
+  // Filter songs - search is done by database, only apply genre filter locally
   const filteredSongs = useMemo(() => {
     return songs.filter(song => {
       // Genre filter
-      const matchesGenre = filterGenre === 'all' || song.genre === filterGenre
-      
-      // BPM filter
-      let matchesBpm = true
-      if (filterBpm !== 'all' && song.bpm) {
-        const bpm = song.bpm
-        switch (filterBpm) {
-          case 'slow': matchesBpm = bpm < 100; break
-          case 'medium': matchesBpm = bpm >= 100 && bpm < 120; break
-          case 'fast': matchesBpm = bpm >= 120 && bpm < 140; break
-          case 'veryfast': matchesBpm = bpm >= 140; break
-        }
-      }
-      
-      return matchesGenre && matchesBpm
+      return filterGenre === 'all' || song.genre === filterGenre
     })
-  }, [songs, filterGenre, filterBpm])
+  }, [songs, filterGenre])
 
   // Reset highlighted index and navigation mode when search changes
   useEffect(() => {
     setHighlightedIndex(0)
     setIsNavigating(false) // Reset navigation mode when typing
-  }, [searchQuery, filterGenre, filterBpm])
+  }, [searchQuery, filterGenre])
 
   // Scroll highlighted item into view
   useEffect(() => {
@@ -236,8 +310,18 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
     
     if (isAdding) {
       newSelected.add(songId)
+      // Also set category if selected
+      if (selectedCategory) {
+        const newSongCategories = new Map(songCategories)
+        newSongCategories.set(songId, selectedCategory)
+        setSongCategories(newSongCategories)
+      }
     } else {
       newSelected.delete(songId)
+      // Remove category assignment
+      const newSongCategories = new Map(songCategories)
+      newSongCategories.delete(songId)
+      setSongCategories(newSongCategories)
     }
     setSelectedIds(newSelected)
 
@@ -250,9 +334,10 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
 
     // Show feedback
     const song = songs.find(s => s.id === songId)
+    const categoryName = selectedCategory ? categories.find(c => c.id === selectedCategory)?.name : ''
     if (song) {
       if (isAdding) {
-        toast.success(`✓ ${song.title}`, { duration: 1500 })
+        toast.success(`✓ ${song.title}${categoryName ? ` (${categoryName})` : ''}`, { duration: 1500 })
       } else {
         toast(`הוסר: ${song.title}`, { duration: 1500 })
       }
@@ -270,8 +355,48 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
         user_id: user.id,
         sort_order: newSelected.size,
       })
+      
+      // Save category assignment if present
+      if (selectedCategory) {
+        await supabase.from('client_song_categories').upsert({
+          client_id: client.id,
+          song_id: songId,
+          category_id: selectedCategory,
+        })
+      }
     } else {
       await supabase.from('client_playlists')
+        .delete()
+        .eq('client_id', client.id)
+        .eq('song_id', songId)
+      
+      // Remove category assignment
+      await supabase.from('client_song_categories')
+        .delete()
+        .eq('client_id', client.id)
+        .eq('song_id', songId)
+    }
+  }
+
+  // Change category for a song
+  const changeSongCategory = async (songId: string, categoryId: string) => {
+    const newSongCategories = new Map(songCategories)
+    if (categoryId) {
+      newSongCategories.set(songId, categoryId)
+    } else {
+      newSongCategories.delete(songId)
+    }
+    setSongCategories(newSongCategories)
+    
+    const supabase = createClient()
+    if (categoryId) {
+      await supabase.from('client_song_categories').upsert({
+        client_id: client.id,
+        song_id: songId,
+        category_id: categoryId,
+      })
+    } else {
+      await supabase.from('client_song_categories')
         .delete()
         .eq('client_id', client.id)
         .eq('song_id', songId)
@@ -300,43 +425,59 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
       return
     }
 
-    // Check if we have file locations
-    const songsWithLocation = selectedSongs.filter(s => s.location)
-    
-    if (songsWithLocation.length === 0) {
-      toast.error('השירים לא יובאו מ-Rekordbox XML. יש לייבא את הספרייה מחדש.')
-      return
-    }
-
     const playlistName = `${client.name}${client.partner_name ? ' & ' + client.partner_name : ''}`
 
-    // Create M3U playlist with actual file paths
-    const m3uContent = `#EXTM3U
-#PLAYLIST:${playlistName}
-${songsWithLocation.map(song => {
-  const artist = song.artist || 'Unknown'
-  const title = song.title
-  // Convert path for M3U (forward slashes)
-  const path = song.location!.replace(/\\/g, '/')
-  return `#EXTINF:-1,${artist} - ${title}
-${path}`
-}).join('\n')}`
+    // Group songs by category
+    const songsByCategory = new Map<string, typeof selectedSongs>()
+    const uncategorized: typeof selectedSongs = []
+    
+    for (const song of selectedSongs) {
+      const categoryId = songCategories.get(song.id)
+      if (categoryId) {
+        if (!songsByCategory.has(categoryId)) {
+          songsByCategory.set(categoryId, [])
+        }
+        songsByCategory.get(categoryId)!.push(song)
+      } else {
+        uncategorized.push(song)
+      }
+    }
 
-    const blob = new Blob([m3uContent], { type: 'audio/x-mpegurl;charset=utf-8' })
+    // Create Rekordbox XML with folders
+    let xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.0.0" Company="AlphaTheta Corporation"/>
+  <COLLECTION Entries="${selectedSongs.length}">
+${selectedSongs.map(song => `    <TRACK TrackID="${song.rekordbox_id || song.id}" Name="${escapeXml(song.title)}" Artist="${escapeXml(song.artist || '')}" Album="${escapeXml(song.album || '')}" Genre="${escapeXml(song.genre || '')}" TotalTime="${song.duration ? parseInt(song.duration.split(':')[0]) * 60 + parseInt(song.duration.split(':')[1] || '0') : 0}" ${song.location ? `Location="${escapeXml(song.location)}"` : ''}/>`).join('\n')}
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="${categories.length + (uncategorized.length > 0 ? 1 : 0) + 1}">
+      <NODE Name="${escapeXml(playlistName)}" Type="0" Count="${songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)}">
+${Array.from(songsByCategory.entries()).map(([catId, catSongs]) => {
+  const category = categories.find(c => c.id === catId)
+  return `        <NODE Name="${escapeXml(category?.name || 'ללא קטגוריה')}" Type="1" KeyType="0" Entries="${catSongs.length}">
+${catSongs.map(song => `          <TRACK Key="${song.rekordbox_id || song.id}"/>`).join('\n')}
+        </NODE>`
+}).join('\n')}
+${uncategorized.length > 0 ? `        <NODE Name="ללא קטגוריה" Type="1" KeyType="0" Entries="${uncategorized.length}">
+${uncategorized.map(song => `          <TRACK Key="${song.rekordbox_id || song.id}"/>`).join('\n')}
+        </NODE>` : ''}
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>`
+
+    const blob = new Blob([xmlContent], { type: 'application/xml;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     
     const a = document.createElement('a')
     a.href = url
-    a.download = `${playlistName.replace(/\s+/g, '_')}.m3u`
+    a.download = `${playlistName.replace(/\s+/g, '_')}.xml`
     a.click()
     
     URL.revokeObjectURL(url)
     
-    if (songsWithLocation.length < selectedSongs.length) {
-      toast.success(`יוצאו ${songsWithLocation.length} שירים (${selectedSongs.length - songsWithLocation.length} ללא נתיב קובץ)`)
-    } else {
-      toast.success('הפלייליסט יוצא! יבא ב-Rekordbox: File → Import → Playlist')
-    }
+    toast.success(`יוצאו ${selectedSongs.length} שירים ב-${songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)} תיקיות`)
   }
 
   // Helper to escape XML special characters
@@ -555,10 +696,10 @@ ${path}`
                 <option key={g} value={g}>{g}</option>
               ))}
             </select>
-            
+
             <select
-              value={filterBpm}
-              onChange={e => setFilterBpm(e.target.value)}
+              value={filterArtist}
+              onChange={e => handleArtistChange(e.target.value)}
               style={{
                 padding: '10px 14px',
                 background: 'rgba(255,255,255,0.1)',
@@ -568,12 +709,32 @@ ${path}`
                 fontSize: '14px',
               }}
             >
-              <option value="all">כל ה-BPM</option>
-              <option value="slow">איטי (&lt;100)</option>
-              <option value="medium">בינוני (100-120)</option>
-              <option value="fast">מהיר (120-140)</option>
-              <option value="veryfast">מאוד מהיר (140+)</option>
+              <option value="all">כל האמנים</option>
+              {artists.map(a => (
+                <option key={a} value={a}>{a}</option>
+              ))}
             </select>
+
+            {categories.length > 0 && (
+              <select
+                value={selectedCategory}
+                onChange={e => setSelectedCategory(e.target.value)}
+                style={{
+                  padding: '10px 14px',
+                  background: selectedCategory ? categories.find(c => c.id === selectedCategory)?.color + '33' : 'rgba(255,255,255,0.1)',
+                  border: '1px solid',
+                  borderColor: selectedCategory ? categories.find(c => c.id === selectedCategory)?.color : 'rgba(255,255,255,0.2)',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  fontSize: '14px',
+                }}
+              >
+                <option value="">ללא קטגוריה</option>
+                {categories.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            )}
 
             {selectedIds.size > 0 && (
               <button
@@ -703,30 +864,6 @@ ${path}`
                   gap: '16px',
                   flexShrink: 0,
                 }}>
-                  {song.bpm && (
-                    <div style={{ 
-                      fontSize: '13px', 
-                      color: '#64748b',
-                      background: 'rgba(255,255,255,0.1)',
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                    }}>
-                      {Math.round(song.bpm)} BPM
-                    </div>
-                  )}
-                  {song.key && (
-                    <div style={{ 
-                      fontSize: '13px', 
-                      color: '#64748b',
-                      background: 'rgba(255,255,255,0.1)',
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                      minWidth: '40px',
-                      textAlign: 'center',
-                    }}>
-                      {song.key}
-                    </div>
-                  )}
                   {song.genre && (
                     <div style={{ 
                       fontSize: '12px', 
@@ -781,16 +918,46 @@ ${path}`
             <div style={{ flex: 1, overflow: 'hidden' }}>
               <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>
                 שירים נבחרים ({selectedIds.size})
+                {categories.length > 0 && ` • ${Array.from(new Set(Array.from(selectedIds).map(id => songCategories.get(id)).filter(Boolean))).length} קטגוריות`}
               </div>
               <div style={{ 
-                fontSize: '14px', 
-                color: '#fff',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                display: 'flex',
+                gap: '8px',
+                flexWrap: 'wrap',
               }}>
-                {selectedSongs.slice(0, 5).map(s => s.title).join(', ')}
-                {selectedSongs.length > 5 && ` ועוד ${selectedSongs.length - 5}...`}
+                {categories.filter(c => 
+                  Array.from(selectedIds).some(id => songCategories.get(id) === c.id)
+                ).map(c => {
+                  const count = Array.from(selectedIds).filter(id => songCategories.get(id) === c.id).length
+                  return (
+                    <span
+                      key={c.id}
+                      style={{
+                        fontSize: '12px',
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        background: c.color + '33',
+                        color: c.color,
+                        border: `1px solid ${c.color}`,
+                      }}
+                    >
+                      {c.name}: {count}
+                    </span>
+                  )
+                })}
+                {Array.from(selectedIds).filter(id => !songCategories.get(id)).length > 0 && (
+                  <span
+                    style={{
+                      fontSize: '12px',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: 'rgba(255,255,255,0.1)',
+                      color: '#94a3b8',
+                    }}
+                  >
+                    ללא קטגוריה: {Array.from(selectedIds).filter(id => !songCategories.get(id)).length}
+                  </span>
+                )}
               </div>
             </div>
             <button
@@ -811,7 +978,7 @@ ${path}`
               }}
             >
               <Download size={18} />
-              ייצא פלייליסט
+              ייצא ל-Rekordbox
             </button>
           </div>
         </div>

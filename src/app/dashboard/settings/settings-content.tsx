@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { 
   User, Building, Bell, 
   Check, X, Loader2, ExternalLink, Save,
-  Mail, Phone, Link2, ChevronDown, ChevronUp
+  Mail, Phone, Link2, ChevronDown, ChevronUp, Music, Plus, Trash2
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
@@ -58,9 +58,94 @@ export default function SettingsContent({ user, settings: initialSettings }: Pro
   const tabs = [
     { id: 'business', label: 'פרטי העסק', icon: Building },
     { id: 'connections', label: 'חיבורים', icon: Link2 },
+    { id: 'categories', label: 'קטגוריות שירים', icon: Music },
     { id: 'account', label: 'חשבון', icon: User },
     { id: 'notifications', label: 'התראות', icon: Bell },
   ]
+
+  // Song Categories
+  type SongCategory = {
+    id: string
+    name: string
+    color: string
+    order_num: number
+  }
+  
+  const [categories, setCategories] = useState<SongCategory[]>([])
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [newCategoryColor, setNewCategoryColor] = useState('#0ea5e9')
+  const [loadingCategories, setLoadingCategories] = useState(false)
+
+  const categoryColors = [
+    '#0ea5e9', // blue
+    '#10b981', // green
+    '#f59e0b', // amber
+    '#ef4444', // red
+    '#8b5cf6', // purple
+    '#ec4899', // pink
+    '#14b8a6', // teal
+    '#f97316', // orange
+  ]
+
+  // Load categories on mount
+  useEffect(() => {
+    const loadCategories = async () => {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('song_categories')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('order_num')
+      
+      if (data) setCategories(data)
+    }
+    loadCategories()
+  }, [user.id])
+
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim()) return
+    
+    setLoadingCategories(true)
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('song_categories')
+        .insert({
+          user_id: user.id,
+          name: newCategoryName.trim(),
+          color: newCategoryColor,
+          order_num: categories.length,
+        })
+        .select()
+        .single()
+      
+      if (error) throw error
+      
+      if (data) {
+        setCategories([...categories, data])
+        setNewCategoryName('')
+        toast.success('קטגוריה נוספה')
+      }
+    } catch (error) {
+      console.error('Error adding category:', error)
+      toast.error('שגיאה בהוספת קטגוריה')
+    } finally {
+      setLoadingCategories(false)
+    }
+  }
+
+  const handleDeleteCategory = async (id: string) => {
+    if (!confirm('למחוק קטגוריה זו?')) return
+    
+    try {
+      const supabase = createClient()
+      await supabase.from('song_categories').delete().eq('id', id)
+      setCategories(categories.filter(c => c.id !== id))
+      toast.success('קטגוריה נמחקה')
+    } catch (error) {
+      toast.error('שגיאה במחיקה')
+    }
+  }
 
   const handleSaveBusiness = async () => {
     setSaving(true)
@@ -300,6 +385,157 @@ export default function SettingsContent({ user, settings: initialSettings }: Pro
               onUpdate={setSettings}
               type="easycount"
             />
+          </div>
+        )}
+
+        {/* Song Categories */}
+        {activeTab === 'categories' && (
+          <div style={{
+            background: '#fff',
+            borderRadius: '16px',
+            border: '1px solid #e9eef4',
+            padding: '32px',
+          }}>
+            <h2 style={{ fontSize: '20px', fontWeight: 600, color: '#0f172a', marginBottom: '8px' }}>
+              קטגוריות שירים
+            </h2>
+            <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '28px' }}>
+              הגדר קטגוריות לארגון שירים בפגישות (למשל: קבלת פנים, רחבה, חובה, לא לנגן)
+            </p>
+
+            {/* Add new category */}
+            <div style={{ 
+              display: 'flex', 
+              gap: '12px', 
+              marginBottom: '24px',
+              maxWidth: '500px',
+            }}>
+              <input
+                type="text"
+                placeholder="שם קטגוריה חדשה..."
+                value={newCategoryName}
+                onChange={e => setNewCategoryName(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && handleAddCategory()}
+                style={{
+                  flex: 1,
+                  padding: '12px 14px',
+                  borderRadius: '10px',
+                  border: '1px solid #e9eef4',
+                  fontSize: '14px',
+                  outline: 'none',
+                }}
+              />
+              
+              {/* Color picker */}
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                {categoryColors.map(color => (
+                  <button
+                    key={color}
+                    onClick={() => setNewCategoryColor(color)}
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '6px',
+                      background: color,
+                      border: newCategoryColor === color ? '2px solid #0f172a' : '2px solid transparent',
+                      cursor: 'pointer',
+                    }}
+                  />
+                ))}
+              </div>
+              
+              <button
+                onClick={handleAddCategory}
+                disabled={loadingCategories || !newCategoryName.trim()}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '12px 20px',
+                  background: '#0ea5e9',
+                  border: 'none',
+                  borderRadius: '10px',
+                  color: '#fff',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  opacity: loadingCategories || !newCategoryName.trim() ? 0.5 : 1,
+                }}
+              >
+                <Plus size={18} />
+                הוסף
+              </button>
+            </div>
+
+            {/* Categories list */}
+            <div style={{ maxWidth: '500px' }}>
+              {categories.length === 0 ? (
+                <div style={{ 
+                  padding: '40px', 
+                  textAlign: 'center', 
+                  color: '#94a3b8',
+                  background: '#f8fafc',
+                  borderRadius: '12px',
+                }}>
+                  אין קטגוריות עדיין. הוסף קטגוריה ראשונה!
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {categories.map(category => (
+                    <div
+                      key={category.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        padding: '14px 16px',
+                        background: '#f8fafc',
+                        borderRadius: '10px',
+                        borderRight: `4px solid ${category.color}`,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '12px',
+                          height: '12px',
+                          borderRadius: '50%',
+                          background: category.color,
+                        }}
+                      />
+                      <span style={{ flex: 1, fontSize: '15px', fontWeight: 500, color: '#0f172a' }}>
+                        {category.name}
+                      </span>
+                      <button
+                        onClick={() => handleDeleteCategory(category.id)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#94a3b8',
+                          cursor: 'pointer',
+                          padding: '4px',
+                        }}
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Info box */}
+            <div style={{
+              marginTop: '32px',
+              padding: '16px',
+              background: '#f0f9ff',
+              borderRadius: '10px',
+              border: '1px solid #bae6fd',
+              maxWidth: '500px',
+            }}>
+              <p style={{ fontSize: '13px', color: '#0369a1', margin: 0 }}>
+                💡 קטגוריות מאפשרות לך לארגן שירים בפגישות עם לקוחות. 
+                בייצוא ל-Rekordbox, כל קטגוריה תיצור תיקייה נפרדת.
+              </p>
+            </div>
           </div>
         )}
 
