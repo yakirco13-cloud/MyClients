@@ -42,7 +42,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       song.artist?.toLowerCase().includes(query)
   })
 
-  // Parse XML in browser - NO deduplication, just parse all songs
+  // Parse XML in browser WITH deduplication
   const parseXMLInBrowser = (text: string) => {
     const parser = new DOMParser()
     const xml = parser.parseFromString(text, 'text/xml')
@@ -61,7 +61,8 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       rekordbox_id: string | null
     }
     
-    const songs: ParsedSong[] = []
+    // Use Map to deduplicate by TITLE ONLY
+    const songMap = new Map<string, ParsedSong>()
 
     tracks.forEach(track => {
       const title = track.getAttribute('Name')?.trim()
@@ -72,6 +73,13 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       const totalTime = parseInt(track.getAttribute('TotalTime') || '0')
       if (kind === 'WAV File' && totalTime < 30) return
 
+      // Dedupe by TITLE ONLY (lowercase)
+      const dedupeKey = title.toLowerCase()
+      
+      // Skip if we already have this title
+      if (songMap.has(dedupeKey)) return
+
+      const artist = track.getAttribute('Artist')?.trim() || null
       const bpmStr = track.getAttribute('AverageBpm')
       const bpm = bpmStr ? parseFloat(bpmStr) : null
       const ratingStr = track.getAttribute('Rating')
@@ -84,9 +92,9 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         return `${mins}:${s.toString().padStart(2, '0')}`
       }
 
-      songs.push({
+      songMap.set(dedupeKey, {
         title,
-        artist: track.getAttribute('Artist')?.trim() || null,
+        artist,
         album: track.getAttribute('Album')?.trim() || null,
         bpm: bpm && bpm > 0 ? bpm : null,
         key: track.getAttribute('Tonality')?.trim() || null,
@@ -95,11 +103,10 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         rating: rating && rating > 0 ? rating : null,
         date_added: track.getAttribute('DateAdded') || null,
         rekordbox_id: track.getAttribute('TrackID') || null,
-        // NOTE: location removed - too large for API
       })
     })
 
-    return songs
+    return Array.from(songMap.values())
   }
 
   const [importProgress, setImportProgress] = useState<string | null>(null)
@@ -123,51 +130,51 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         throw new Error('לא נמצאו שירים בקובץ')
       }
 
-      // Send in small chunks of 50 songs (Vercel has 4.5MB limit)
-      const CHUNK_SIZE = 50
+      // Send chunks in PARALLEL (10 at a time)
+      const CHUNK_SIZE = 100
+      const PARALLEL_REQUESTS = 10
       let totalImported = 0
       let totalErrors = 0
-      const allErrors: string[] = []
       
-      const totalChunks = Math.ceil(parsedSongs.length / CHUNK_SIZE)
-      console.log(`Sending ${totalChunks} chunks of ${CHUNK_SIZE} songs`)
-      
+      const chunks: typeof parsedSongs[] = []
       for (let i = 0; i < parsedSongs.length; i += CHUNK_SIZE) {
-        const chunkNum = Math.floor(i / CHUNK_SIZE) + 1
-        const chunk = parsedSongs.slice(i, i + CHUNK_SIZE)
+        chunks.push(parsedSongs.slice(i, i + CHUNK_SIZE))
+      }
+      
+      console.log(`Sending ${chunks.length} chunks in parallel batches of ${PARALLEL_REQUESTS}`)
+      
+      for (let i = 0; i < chunks.length; i += PARALLEL_REQUESTS) {
+        const batch = chunks.slice(i, i + PARALLEL_REQUESTS)
+        const batchNum = Math.floor(i / PARALLEL_REQUESTS) + 1
+        const totalBatches = Math.ceil(chunks.length / PARALLEL_REQUESTS)
         
-        setImportProgress(`מייבא חלק ${chunkNum}/${totalChunks} (${Math.min(i + CHUNK_SIZE, parsedSongs.length)}/${parsedSongs.length})...`)
+        setImportProgress(`מייבא ${batchNum}/${totalBatches} (${Math.min((i + PARALLEL_REQUESTS) * CHUNK_SIZE, parsedSongs.length)}/${parsedSongs.length})...`)
         
-        try {
-          const response = await fetch('/api/songs/import-json', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ songs: chunk }),
+        const results = await Promise.all(
+          batch.map(async (chunk) => {
+            try {
+              const response = await fetch('/api/songs/import-json', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ songs: chunk }),
+              })
+              const result = await response.json()
+              return { imported: result.imported || 0, errors: result.errors || 0 }
+            } catch (e) {
+              return { imported: 0, errors: chunk.length }
+            }
           })
-
-          const result = await response.json()
-          
-          if (!response.ok) {
-            console.error(`Chunk ${chunkNum} failed:`, result.error)
-            allErrors.push(`חלק ${chunkNum}: ${result.error}`)
-            totalErrors += chunk.length
-          } else {
-            totalImported += result.imported || 0
-            totalErrors += result.errors || 0
-            console.log(`Chunk ${chunkNum}: imported ${result.imported}, errors ${result.errors || 0}`)
-          }
-        } catch (chunkError) {
-          console.error(`Chunk ${chunkNum} exception:`, chunkError)
-          allErrors.push(`חלק ${chunkNum}: ${chunkError instanceof Error ? chunkError.message : 'שגיאה'}`)
-          totalErrors += chunk.length
+        )
+        
+        for (const r of results) {
+          totalImported += r.imported
+          totalErrors += r.errors
         }
+        
+        console.log(`Batch ${batchNum}/${totalBatches}: +${results.reduce((a, r) => a + r.imported, 0)} songs`)
       }
 
       console.log(`DONE: ${totalImported} imported, ${totalErrors} errors`)
-      
-      if (allErrors.length > 0) {
-        console.error('Errors:', allErrors)
-      }
 
       // Show result
       if (totalErrors > 0) {
