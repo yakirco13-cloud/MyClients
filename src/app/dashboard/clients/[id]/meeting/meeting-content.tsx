@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
+import JSZip from 'jszip'
 
 type Song = {
   id: string
@@ -442,7 +443,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
   }
 
   // Export playlist as M3U (Rekordbox Import Playlist)
-  const exportPlaylist = () => {
+  const exportPlaylist = async () => {
     // Get all selected songs from selectedSongsData (not just visible ones)
     const allSelectedSongs = Array.from(selectedIds).map(id => 
       selectedSongsData.get(id) || songs.find(s => s.id === id)
@@ -454,6 +455,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
     }
 
     const playlistName = `${client.name}${client.partner_name ? ' & ' + client.partner_name : ''}`
+    const folderName = playlistName.replace(/\s+/g, '_')
     
     // Group songs by category
     const songsByCategory = new Map<string, Song[]>()
@@ -490,54 +492,40 @@ ${path}`
 }).join('\n')}`
     }
 
-    const downloadM3U = (content: string, filename: string) => {
-      const blob = new Blob([content], { type: 'audio/x-mpegurl;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      a.click()
-      URL.revokeObjectURL(url)
-    }
+    // Create ZIP with folder containing M3U files
+    const zip = new JSZip()
+    const folder = zip.folder(folderName)!
 
-    // If no categories or all uncategorized, single M3U
+    // If no categories, single M3U in folder
     if (categories.length === 0 || (songsByCategory.size === 0 && uncategorized.length > 0)) {
-      downloadM3U(createM3U(allSelectedSongs, playlistName), `${playlistName.replace(/\s+/g, '_')}.m3u`)
-      const withLoc = allSelectedSongs.filter(s => s.location).length
-      toast.success(`יוצא פלייליסט עם ${withLoc} שירים (מתוך ${allSelectedSongs.length})`)
-      return
+      folder.file(`${folderName}.m3u`, createM3U(allSelectedSongs, playlistName))
+    } else {
+      // Add M3U for each category
+      Array.from(songsByCategory.entries()).forEach(([catId, catSongs]) => {
+        const category = categories.find(c => c.id === catId)
+        const catName = category?.name || 'Unknown'
+        const filename = `${catName.replace(/\s+/g, '_')}.m3u`
+        folder.file(filename, createM3U(catSongs, `${playlistName} - ${catName}`))
+      })
+
+      // Add uncategorized if exists
+      if (uncategorized.length > 0) {
+        folder.file('ללא_קטגוריה.m3u', createM3U(uncategorized, `${playlistName} - ללא קטגוריה`))
+      }
     }
 
-    // Multiple M3U files - one per category
-    let downloadCount = 0
+    // Generate and download ZIP
+    const blob = await zip.generateAsync({ type: 'blob' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${folderName}.zip`
+    a.click()
+    URL.revokeObjectURL(url)
+
     const totalFiles = songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)
-    
-    Array.from(songsByCategory.entries()).forEach(([catId, catSongs], index) => {
-      const category = categories.find(c => c.id === catId)
-      const catName = category?.name || 'Unknown'
-      const filename = `${playlistName.replace(/\s+/g, '_')}_${catName.replace(/\s+/g, '_')}.m3u`
-      
-      setTimeout(() => {
-        downloadM3U(createM3U(catSongs, `${playlistName} - ${catName}`), filename)
-        downloadCount++
-        if (downloadCount === totalFiles) {
-          const totalWithLoc = allSelectedSongs.filter(s => s.location).length
-          toast.success(`יוצאו ${totalFiles} פלייליסטים (${totalWithLoc} שירים עם נתיבים)`)
-        }
-      }, index * 300)
-    })
-
-    if (uncategorized.length > 0) {
-      setTimeout(() => {
-        const filename = `${playlistName.replace(/\s+/g, '_')}_ללא_קטגוריה.m3u`
-        downloadM3U(createM3U(uncategorized, `${playlistName} - ללא קטגוריה`), filename)
-        downloadCount++
-        if (downloadCount === totalFiles) {
-          const totalWithLoc = allSelectedSongs.filter(s => s.location).length
-          toast.success(`יוצאו ${totalFiles} פלייליסטים (${totalWithLoc} שירים עם נתיבים)`)
-        }
-      }, songsByCategory.size * 300)
-    }
+    const totalWithLoc = allSelectedSongs.filter(s => s.location).length
+    toast.success(`יוצא ZIP עם ${totalFiles} פלייליסטים (${totalWithLoc} שירים עם נתיבים)`)
   }
 
   const selectedSongs = songs.filter(s => selectedIds.has(s.id))
