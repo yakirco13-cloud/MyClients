@@ -49,17 +49,32 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Step 2: Get all existing songs for this user (title + artist)
-    const { data: existingSongs } = await supabase
-      .from('songs')
-      .select('title, artist')
-      .eq('user_id', user.id)
-    
+    // Step 2: Get ALL existing songs for this user (title + artist)
+    // IMPORTANT: Supabase has a default limit, so we paginate to get all
     const existingKeys = new Set<string>()
-    if (existingSongs) {
+    let page = 0
+    const PAGE_SIZE = 1000
+    
+    while (true) {
+      const { data: existingSongs, error } = await supabase
+        .from('songs')
+        .select('title, artist')
+        .eq('user_id', user.id)
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
+      
+      if (error) {
+        console.error('Error fetching existing songs:', error)
+        break
+      }
+      
+      if (!existingSongs || existingSongs.length === 0) break
+      
       for (const song of existingSongs) {
         existingKeys.add(getSongKey(song.title, song.artist))
       }
+      
+      if (existingSongs.length < PAGE_SIZE) break
+      page++
     }
 
     // Step 3: Filter out songs that already exist

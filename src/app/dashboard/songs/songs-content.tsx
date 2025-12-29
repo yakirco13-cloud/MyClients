@@ -277,14 +277,26 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Get all songs
-      const { data: allSongs } = await supabase
-        .from('songs')
-        .select('id, title, artist, created_at')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: true })
+      // Get ALL songs with pagination
+      const allSongs: Array<{ id: string; title: string; artist: string | null; created_at: string }> = []
+      let page = 0
+      const PAGE_SIZE = 1000
+      
+      while (true) {
+        const { data: pageSongs } = await supabase
+          .from('songs')
+          .select('id, title, artist, created_at')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: true })
+          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
+        
+        if (!pageSongs || pageSongs.length === 0) break
+        allSongs.push(...pageSongs)
+        if (pageSongs.length < PAGE_SIZE) break
+        page++
+      }
 
-      if (!allSongs || allSongs.length === 0) {
+      if (allSongs.length === 0) {
         toast.info('אין שירים בספרייה')
         return
       }
@@ -343,6 +355,91 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
     }
   }
 
+  // Compare XML with database to find missing songs
+  const [comparing, setComparing] = useState(false)
+  const [compareResult, setCompareResult] = useState<{
+    xmlCount: number
+    dbCount: number
+    missing: Array<{ title: string; artist: string | null }>
+  } | null>(null)
+  const compareInputRef = useRef<HTMLInputElement>(null)
+
+  const handleCompareXML = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setComparing(true)
+    setImportProgress('קורא קובץ XML...')
+
+    try {
+      const text = await file.text()
+      
+      // Parse XML
+      const xmlSongs = parseXMLInBrowser(text)
+      
+      setImportProgress('טוען שירים מהמאגר...')
+      
+      // Get ALL songs from database with pagination
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Not authenticated')
+
+      const dbKeys = new Set<string>()
+      let page = 0
+      const PAGE_SIZE = 1000
+      let totalDbSongs = 0
+      
+      while (true) {
+        const { data: dbSongs } = await supabase
+          .from('songs')
+          .select('title, artist')
+          .eq('user_id', user.id)
+          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
+        
+        if (!dbSongs || dbSongs.length === 0) break
+        
+        totalDbSongs += dbSongs.length
+        
+        for (const song of dbSongs) {
+          const key = `${(song.title || '').toLowerCase().trim()}|||${(song.artist || '').toLowerCase().trim()}`
+          dbKeys.add(key)
+        }
+        
+        if (dbSongs.length < PAGE_SIZE) break
+        page++
+      }
+
+      // Find missing songs
+      const missing: Array<{ title: string; artist: string | null }> = []
+      for (const song of xmlSongs) {
+        const key = `${song.title.toLowerCase().trim()}|||${(song.artist || '').toLowerCase().trim()}`
+        if (!dbKeys.has(key)) {
+          missing.push({ title: song.title, artist: song.artist })
+        }
+      }
+
+      setCompareResult({
+        xmlCount: xmlSongs.length,
+        dbCount: totalDbSongs,
+        missing: missing.slice(0, 100), // Show first 100
+      })
+
+      if (missing.length === 0) {
+        toast.success('כל השירים מה-XML קיימים במאגר!')
+      } else {
+        toast.info(`נמצאו ${missing.length} שירים חסרים`)
+      }
+
+    } catch (error) {
+      console.error('Compare error:', error)
+      toast.error('שגיאה בהשוואה')
+    } finally {
+      setComparing(false)
+      setImportProgress(null)
+      if (compareInputRef.current) compareInputRef.current.value = ''
+    }
+  }
+
   return (
     <div>
       {/* Header */}
@@ -364,6 +461,32 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         <div style={{ display: 'flex', gap: '12px' }}>
           {songs.length > 0 && (
             <>
+              <button
+                onClick={() => compareInputRef.current?.click()}
+                disabled={importing || comparing}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '10px 16px',
+                  background: '#fff',
+                  border: '1px solid #c4b5fd',
+                  borderRadius: '8px',
+                  color: '#7c3aed',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                <Search size={16} />
+                השווה XML
+              </button>
+              <input
+                ref={compareInputRef}
+                type="file"
+                accept=".xml"
+                onChange={handleCompareXML}
+                style={{ display: 'none' }}
+              />
               <button
                 onClick={handleDeleteDuplicates}
                 disabled={importing}
@@ -514,6 +637,64 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
             <Upload size={20} />
             בחר קובץ לייבוא
           </button>
+        </div>
+      )}
+
+      {/* Compare Results Modal */}
+      {compareResult && (
+        <div style={{
+          background: '#fff',
+          border: '1px solid #c4b5fd',
+          borderRadius: '16px',
+          padding: '24px',
+          marginBottom: '24px',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#0f172a', margin: 0 }}>
+              תוצאות השוואה
+            </h3>
+            <button
+              onClick={() => setCompareResult(null)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+            >
+              <X size={20} color="#64748b" />
+            </button>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+            <div style={{ background: '#f0f9ff', padding: '16px', borderRadius: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '24px', fontWeight: 700, color: '#0ea5e9' }}>{compareResult.xmlCount}</div>
+              <div style={{ fontSize: '13px', color: '#64748b' }}>שירים ב-XML</div>
+            </div>
+            <div style={{ background: '#ecfdf5', padding: '16px', borderRadius: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '24px', fontWeight: 700, color: '#10b981' }}>{compareResult.dbCount}</div>
+              <div style={{ fontSize: '13px', color: '#64748b' }}>שירים במאגר</div>
+            </div>
+            <div style={{ background: compareResult.missing.length > 0 ? '#fef2f2' : '#ecfdf5', padding: '16px', borderRadius: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '24px', fontWeight: 700, color: compareResult.missing.length > 0 ? '#ef4444' : '#10b981' }}>{compareResult.missing.length}</div>
+              <div style={{ fontSize: '13px', color: '#64748b' }}>שירים חסרים</div>
+            </div>
+          </div>
+
+          {compareResult.missing.length > 0 && (
+            <>
+              <h4 style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a', margin: '0 0 12px' }}>
+                שירים חסרים (עד 100 ראשונים):
+              </h4>
+              <div style={{ maxHeight: '300px', overflowY: 'auto', background: '#f8fafc', borderRadius: '8px', padding: '12px' }}>
+                {compareResult.missing.map((song, i) => (
+                  <div key={i} style={{ 
+                    padding: '8px 0', 
+                    borderBottom: i < compareResult.missing.length - 1 ? '1px solid #e2e8f0' : 'none',
+                    fontSize: '13px',
+                  }}>
+                    <span style={{ fontWeight: 500, color: '#0f172a' }}>{song.title}</span>
+                    {song.artist && <span style={{ color: '#64748b' }}> - {song.artist}</span>}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
