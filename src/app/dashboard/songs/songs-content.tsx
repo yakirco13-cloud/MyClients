@@ -34,13 +34,63 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
   const [searchQuery, setSearchQuery] = useState('')
   const [importing, setImporting] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [searching, setSearching] = useState(false)
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  const filteredSongs = songs.filter(song => {
-    const query = searchQuery.toLowerCase()
-    return !query || 
-      song.title.toLowerCase().includes(query) ||
-      song.artist?.toLowerCase().includes(query)
-  })
+  // Search database when query changes
+  const searchDatabase = async (query: string) => {
+    setSearching(true)
+    try {
+      const supabase = createClient()
+      
+      if (!query.trim()) {
+        // No search - load first 500 songs
+        const { data, count } = await supabase
+          .from('songs')
+          .select('*', { count: 'exact' })
+          .order('title')
+          .limit(500)
+        
+        if (data) {
+          setSongs(data)
+          setTotalCount(count || data.length)
+        }
+      } else {
+        // Search with ilike
+        const { data, count } = await supabase
+          .from('songs')
+          .select('*', { count: 'exact' })
+          .or(`title.ilike.%${query}%,artist.ilike.%${query}%`)
+          .order('title')
+          .limit(500)
+        
+        if (data) {
+          setSongs(data)
+          setTotalCount(count || data.length)
+        }
+      }
+    } catch (error) {
+      console.error('Search error:', error)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  // Debounced search - wait 300ms after typing stops
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value)
+    
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+    
+    searchTimeoutRef.current = setTimeout(() => {
+      searchDatabase(value)
+    }, 300)
+  }
+
+  // Use songs directly (no local filtering needed)
+  const filteredSongs = songs
 
   // Parse XML in browser WITH deduplication
   const parseXMLInBrowser = (text: string) => {
@@ -694,7 +744,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
               type="text"
               placeholder="חיפוש שיר או אמן..."
               value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+              onChange={e => handleSearchChange(e.target.value)}
               style={{
                 width: '100%',
                 padding: '10px 40px 10px 12px',
@@ -704,6 +754,19 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
                 outline: 'none',
               }}
             />
+            {searching && (
+              <Loader2 
+                size={16} 
+                color="#94a3b8" 
+                style={{ 
+                  position: 'absolute', 
+                  left: '12px', 
+                  top: '50%', 
+                  transform: 'translateY(-50%)',
+                  animation: 'spin 1s linear infinite'
+                }} 
+              />
+            )}
           </div>
         </div>
       )}
