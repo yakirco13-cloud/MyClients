@@ -96,8 +96,8 @@ export async function POST(request: NextRequest) {
     
     log(`Text length: ${text.length} characters`)
 
-    // Parse ALL tracks with regex
-    const trackRegex = /<TRACK\s+([^>]+)>/g
+    // Parse ALL tracks with regex (handle multi-line TRACK elements)
+    const trackRegex = /<TRACK\s+([\s\S]*?)(?:\/>|>[\s\S]*?<\/TRACK>)/g
     let match
     
     type ParsedSong = {

@@ -1104,8 +1104,6 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
               <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e9eef4' }}>
                 <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>שיר</th>
                 <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>אמן</th>
-                <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>BPM</th>
-                <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>Key</th>
                 <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: '#64748b' }}>ז׳אנר</th>
                 <th style={{ padding: '12px 16px', width: '50px' }}></th>
               </tr>
@@ -1118,12 +1116,6 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
                   </td>
                   <td style={{ padding: '12px 16px', fontSize: '14px', color: '#64748b' }}>
                     {song.artist || '-'}
-                  </td>
-                  <td style={{ padding: '12px 16px', fontSize: '14px', color: '#64748b', textAlign: 'center' }}>
-                    {song.bpm ? Math.round(song.bpm) : '-'}
-                  </td>
-                  <td style={{ padding: '12px 16px', fontSize: '14px', color: '#64748b', textAlign: 'center' }}>
-                    {song.key || '-'}
                   </td>
                   <td style={{ padding: '12px 16px', fontSize: '13px', color: '#94a3b8' }}>
                     {song.genre || '-'}
