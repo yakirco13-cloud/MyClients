@@ -15,13 +15,6 @@ type SongInput = {
   location: string | null
 }
 
-// Create a unique key for deduplication
-function getSongKey(title: string, artist: string | null): string {
-  const normalizedTitle = (title || '').toLowerCase().trim()
-  const normalizedArtist = (artist || '').toLowerCase().trim()
-  return `${normalizedTitle}|||${normalizedArtist}`
-}
-
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
@@ -37,71 +30,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No songs provided' }, { status: 400 })
     }
 
-    // Step 1: Dedupe incoming songs (keep first occurrence)
-    const seenKeys = new Set<string>()
-    const uniqueSongs: SongInput[] = []
-    
-    for (const song of songs) {
-      const key = getSongKey(song.title, song.artist)
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key)
-        uniqueSongs.push(song)
-      }
-    }
-
-    // Step 2: Get ALL existing songs for this user (title + artist)
-    // IMPORTANT: Supabase has a default limit, so we paginate to get all
-    const existingKeys = new Set<string>()
-    let page = 0
-    const PAGE_SIZE = 1000
-    
-    while (true) {
-      const { data: existingSongs, error } = await supabase
-        .from('songs')
-        .select('title, artist')
-        .eq('user_id', user.id)
-        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
-      
-      if (error) {
-        console.error('Error fetching existing songs:', error)
-        break
-      }
-      
-      if (!existingSongs || existingSongs.length === 0) break
-      
-      for (const song of existingSongs) {
-        existingKeys.add(getSongKey(song.title, song.artist))
-      }
-      
-      if (existingSongs.length < PAGE_SIZE) break
-      page++
-    }
-
-    // Step 3: Filter out songs that already exist
-    const newSongs = uniqueSongs.filter(song => {
-      const key = getSongKey(song.title, song.artist)
-      return !existingKeys.has(key)
-    })
-
-    const skipped = songs.length - newSongs.length
-
-    if (newSongs.length === 0) {
-      return NextResponse.json({
-        success: true,
-        imported: 0,
-        skipped,
-        message: `כל השירים כבר קיימים בספרייה (${skipped} כפילויות דולגו)`
-      })
-    }
-
-    // Step 4: Insert new songs in batches
-    const songsWithUser = newSongs.map(song => ({
+    // Add user_id to all songs - NO deduplication, just insert everything
+    const songsWithUser = songs.map(song => ({
       user_id: user.id,
       ...song,
     }))
 
+    // Insert in batches
     const BATCH_SIZE = 100
     let imported = 0
+    let errors = 0
     
     for (let i = 0; i < songsWithUser.length; i += BATCH_SIZE) {
       const batch = songsWithUser.slice(i, i + BATCH_SIZE)
@@ -112,13 +50,15 @@ export async function POST(request: NextRequest) {
       
       if (error) {
         console.error('Batch insert error:', error)
-        // Try one by one for this batch
+        // Try one by one
         for (const song of batch) {
           const { error: singleError } = await supabase
             .from('songs')
             .insert(song)
           
-          if (!singleError) {
+          if (singleError) {
+            errors++
+          } else {
             imported++
           }
         }
@@ -130,8 +70,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       imported,
-      skipped,
-      message: `${imported} שירים יובאו בהצלחה!${skipped > 0 ? ` (${skipped} כפילויות דולגו)` : ''}`
+      errors,
+      message: `${imported} שירים יובאו!${errors > 0 ? ` (${errors} שגיאות)` : ''}`
     })
 
   } catch (error) {

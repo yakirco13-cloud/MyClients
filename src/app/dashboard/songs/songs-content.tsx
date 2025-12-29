@@ -42,7 +42,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       song.artist?.toLowerCase().includes(query)
   })
 
-  // Parse XML in browser with deduplication
+  // Parse XML in browser - NO deduplication, just parse all songs
   const parseXMLInBrowser = (text: string) => {
     const parser = new DOMParser()
     const xml = parser.parseFromString(text, 'text/xml')
@@ -62,28 +62,16 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       location: string | null
     }
     
-    // Use Map for deduplication (key = title + artist)
-    const songMap = new Map<string, ParsedSong>()
-    
-    // Helper to create unique key
-    const getSongKey = (title: string, artist: string | null) => {
-      return `${title.toLowerCase().trim()}|||${(artist || '').toLowerCase().trim()}`
-    }
+    const songs: ParsedSong[] = []
 
     tracks.forEach(track => {
       const title = track.getAttribute('Name')?.trim()
       if (!title) return
 
-      // Skip short WAV samples
+      // Skip short WAV samples (sound effects)
       const kind = track.getAttribute('Kind') || ''
       const totalTime = parseInt(track.getAttribute('TotalTime') || '0')
       if (kind === 'WAV File' && totalTime < 30) return
-
-      const artist = track.getAttribute('Artist')?.trim() || null
-      const key = getSongKey(title, artist)
-      
-      // Skip if already seen
-      if (songMap.has(key)) return
 
       const bpmStr = track.getAttribute('AverageBpm')
       const bpm = bpmStr ? parseFloat(bpmStr) : null
@@ -105,9 +93,9 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         return `${mins}:${s.toString().padStart(2, '0')}`
       }
 
-      songMap.set(key, {
+      songs.push({
         title,
-        artist,
+        artist: track.getAttribute('Artist')?.trim() || null,
         album: track.getAttribute('Album')?.trim() || null,
         bpm: bpm && bpm > 0 ? bpm : null,
         key: track.getAttribute('Tonality')?.trim() || null,
@@ -120,7 +108,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       })
     })
 
-    return Array.from(songMap.values())
+    return songs
   }
 
   const [importProgress, setImportProgress] = useState<string | null>(null)
@@ -130,81 +118,41 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
     if (!file) return
 
     setImporting(true)
-    setImportProgress('קורא קובץ...')
+    setImportProgress('מעלה קובץ לשרת...')
     
     try {
-      const text = await file.text()
-      const fileName = file.name.toLowerCase()
-      
-      let parsedSongs
-      
-      // Parse XML in browser
-      if (fileName.endsWith('.xml') || text.trim().startsWith('<?xml')) {
-        setImportProgress('מנתח שירים...')
-        parsedSongs = parseXMLInBrowser(text)
+      // Send raw file to server - server does all parsing
+      const formData = new FormData()
+      formData.append('file', file)
+
+      setImportProgress('מייבא שירים... (זה יכול לקחת דקה)')
+
+      const response = await fetch('/api/songs/import', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const result = await response.json()
+
+      // Log server details for debugging
+      console.log('Import result:', result)
+      if (result.logs) {
+        console.log('Server logs:', result.logs.join('\n'))
+      }
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Import failed')
+      }
+
+      // Show detailed result
+      const msg = `יובאו ${result.inserted} שירים מתוך ${result.parsed} שנותחו`
+      if (result.errors > 0) {
+        toast.error(`${msg} (${result.errors} שגיאות)`)
+        console.error('Error details:', result.errorDetails)
       } else {
-        // For TXT files, still send to server (small files)
-        const formData = new FormData()
-        formData.append('file', file)
-
-        const response = await fetch('/api/songs/import', {
-          method: 'POST',
-          body: formData,
-        })
-
-        const result = await response.json()
-
-        if (!response.ok) {
-          throw new Error(result.error || 'Import failed')
-        }
-
-        toast.success(result.message)
-        router.refresh()
-        
-        const supabase = createClient()
-        const { data, count } = await supabase
-          .from('songs')
-          .select('*', { count: 'exact' })
-          .order('title')
-        
-        if (data) {
-          setSongs(data)
-          setTotalCount(count || data.length)
-        }
-        return
+        toast.success(msg)
       }
 
-      if (parsedSongs.length === 0) {
-        throw new Error('לא נמצאו שירים בקובץ')
-      }
-
-      // Send in chunks of 500 songs
-      const CHUNK_SIZE = 500
-      let totalImported = 0
-      let totalSkipped = 0
-      
-      for (let i = 0; i < parsedSongs.length; i += CHUNK_SIZE) {
-        const chunk = parsedSongs.slice(i, i + CHUNK_SIZE)
-        const progress = Math.min(i + CHUNK_SIZE, parsedSongs.length)
-        setImportProgress(`מייבא ${progress} / ${parsedSongs.length} שירים...`)
-        
-        const response = await fetch('/api/songs/import-json', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ songs: chunk }),
-        })
-
-        if (!response.ok) {
-          const result = await response.json()
-          throw new Error(result.error || 'Import failed')
-        }
-        
-        const result = await response.json()
-        totalImported += result.imported || 0
-        totalSkipped += result.skipped || 0
-      }
-
-      toast.success(`${totalImported} שירים יובאו בהצלחה!${totalSkipped > 0 ? ` (${totalSkipped} כפילויות דולגו)` : ''}`)
       router.refresh()
       
       // Reload songs with count
