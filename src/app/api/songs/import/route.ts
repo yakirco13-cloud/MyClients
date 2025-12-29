@@ -121,7 +121,8 @@ export async function POST(request: NextRequest) {
     
     while ((match = trackRegex.exec(text)) !== null) {
       trackCount++
-      const attrs = match[1]
+      // Normalize whitespace (collapse newlines/spaces into single space)
+      const attrs = match[1].replace(/\s+/g, ' ')
       
       const getAttr = (attr: string): string | null => {
         const m = attrs.match(new RegExp(`${attr}="([^"]*)"`, 'i'))
@@ -150,6 +151,12 @@ export async function POST(request: NextRequest) {
         }
       }
       
+      // Debug: log first track's location
+      if (trackCount === 1) {
+        log(`First track location raw: ${getAttr('Location')}`)
+        log(`First track location processed: ${location}`)
+      }
+      
       const bpmStr = getAttr('AverageBpm')
       const ratingStr = getAttr('Rating')
       
@@ -168,8 +175,9 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    const songsWithLocation = allSongs.filter(s => s.location).length
     log(`Parsed: ${trackCount} tracks, ${skippedNoName} no name, ${skippedShortWav} short WAV`)
-    log(`Songs to insert: ${allSongs.length}`)
+    log(`Songs to insert: ${allSongs.length}, with location: ${songsWithLocation}`)
 
     if (allSongs.length === 0) {
       return NextResponse.json({ 
