@@ -1,10 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-// Sanitize text to remove null bytes and invalid unicode
+// Decode HTML entities
+function decodeHtmlEntities(text: string): string {
+  const entities: Record<string, string> = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&apos;': "'",
+    '&#39;': "'",
+    '&nbsp;': ' ',
+  }
+  
+  // Replace named entities
+  let result = text
+  for (const [entity, char] of Object.entries(entities)) {
+    result = result.replace(new RegExp(entity, 'g'), char)
+  }
+  
+  // Replace numeric entities (&#1234; or &#x1234;)
+  result = result.replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+  result = result.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+  
+  return result
+}
+
+// Sanitize and normalize text for Hebrew support
 function sanitizeText(text: string | null | undefined): string | null {
   if (!text) return null
-  return text.replace(/\u0000/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').trim() || null
+  
+  // Decode HTML entities first
+  let clean = decodeHtmlEntities(text)
+  
+  // Remove null bytes and control characters
+  clean = clean.replace(/\u0000/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+  
+  // Normalize Unicode (important for Hebrew)
+  clean = clean.normalize('NFC')
+  
+  // Trim and return null if empty
+  clean = clean.trim()
+  return clean || null
 }
 
 // Format seconds to MM:SS
@@ -196,7 +233,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
     }
 
-    const text = await file.text()
+    // Read file as ArrayBuffer first to handle encoding properly
+    const buffer = await file.arrayBuffer()
+    const bytes = new Uint8Array(buffer)
+    
+    // Remove UTF-8 BOM if present
+    let startIndex = 0
+    if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      startIndex = 3
+    }
+    
+    // Decode as UTF-8
+    const decoder = new TextDecoder('utf-8')
+    let text = decoder.decode(bytes.slice(startIndex))
+    
+    // Normalize the text for consistent Hebrew handling
+    text = text.normalize('NFC')
+    
     const fileName = file.name.toLowerCase()
     
     // Detect format and parse

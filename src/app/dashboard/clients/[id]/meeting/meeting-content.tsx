@@ -37,6 +37,17 @@ type Props = {
   selectedSongIds: string[]
 }
 
+// Normalize text for Hebrew search - handles different Unicode representations
+function normalizeText(text: string): string {
+  if (!text) return ''
+  return text
+    .normalize('NFC') // Normalize Unicode (combines characters)
+    .toLowerCase()
+    .trim()
+    // Remove diacritics/niqqud if present
+    .replace(/[\u0591-\u05C7]/g, '')
+}
+
 export default function MeetingContent({ client, songs, selectedSongIds: initialSelected }: Props) {
   const router = useRouter()
   const searchRef = useRef<HTMLInputElement>(null)
@@ -48,6 +59,7 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
   const [saving, setSaving] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(0)
+  const [isNavigating, setIsNavigating] = useState(false) // Track if user is navigating with arrows
 
   // Focus search on load
   useEffect(() => {
@@ -61,15 +73,22 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
     return Array.from(g).sort()
   }, [songs])
 
-  // Filter songs
+  // Filter songs with improved Hebrew search
   const filteredSongs = useMemo(() => {
     return songs.filter(song => {
-      // Search filter
-      const query = searchQuery.toLowerCase()
-      const matchesSearch = !query || 
-        song.title.toLowerCase().includes(query) ||
-        song.artist?.toLowerCase().includes(query) ||
-        song.album?.toLowerCase().includes(query)
+      // Search filter with Hebrew normalization
+      const query = normalizeText(searchQuery)
+      if (!query) {
+        // No search query - only apply other filters
+      } else {
+        const titleMatch = normalizeText(song.title).includes(query)
+        const artistMatch = normalizeText(song.artist || '').includes(query)
+        const albumMatch = normalizeText(song.album || '').includes(query)
+        
+        if (!titleMatch && !artistMatch && !albumMatch) {
+          return false
+        }
+      }
       
       // Genre filter
       const matchesGenre = filterGenre === 'all' || song.genre === filterGenre
@@ -86,13 +105,14 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
         }
       }
       
-      return matchesSearch && matchesGenre && matchesBpm
+      return matchesGenre && matchesBpm
     })
   }, [songs, searchQuery, filterGenre, filterBpm])
 
-  // Reset highlighted index when search changes
+  // Reset highlighted index and navigation mode when search changes
   useEffect(() => {
     setHighlightedIndex(0)
+    setIsNavigating(false) // Reset navigation mode when typing
   }, [searchQuery, filterGenre, filterBpm])
 
   // Scroll highlighted item into view
@@ -116,27 +136,42 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
       
       if (!isSearchFocused && isInputFocused) return
 
-      // Arrow Down - move highlight down
+      // Arrow Down - move highlight down and enter navigation mode
       if (e.key === 'ArrowDown') {
         e.preventDefault()
+        setIsNavigating(true) // User started navigating
         setHighlightedIndex(prev => 
           prev < filteredSongs.length - 1 ? prev + 1 : prev
         )
       }
       
-      // Arrow Up - move highlight up
+      // Arrow Up - move highlight up and enter navigation mode
       if (e.key === 'ArrowUp') {
         e.preventDefault()
+        setIsNavigating(true) // User started navigating
         setHighlightedIndex(prev => prev > 0 ? prev - 1 : 0)
       }
       
-      // Spacebar or Enter - toggle selection and clear search
-      if (e.key === ' ' || e.key === 'Enter') {
-        if (isSearchFocused && filteredSongs.length > 0 && searchQuery) {
+      // Spacebar - only select if user is navigating with arrows
+      if (e.key === ' ') {
+        // If user is navigating (used arrows), select the song
+        if (isNavigating && filteredSongs.length > 0) {
           e.preventDefault()
           const song = filteredSongs[highlightedIndex]
           if (song) {
             toggleSong(song.id, true) // true = clear search after
+          }
+        }
+        // If not navigating, let the space be typed normally in the search
+      }
+      
+      // Enter - always select (useful for quick selection)
+      if (e.key === 'Enter') {
+        if (isSearchFocused && filteredSongs.length > 0 && searchQuery) {
+          e.preventDefault()
+          const song = filteredSongs[highlightedIndex]
+          if (song) {
+            toggleSong(song.id, true)
           }
         }
       }
@@ -144,6 +179,7 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
       // Escape - clear search
       if (e.key === 'Escape') {
         setSearchQuery('')
+        setIsNavigating(false)
         searchRef.current?.focus()
       }
 
@@ -156,7 +192,7 @@ export default function MeetingContent({ client, songs, selectedSongIds: initial
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredSongs, highlightedIndex, searchQuery])
+  }, [filteredSongs, highlightedIndex, searchQuery, isNavigating])
 
   // Toggle song selection
   const toggleSong = async (songId: string, clearSearch = false) => {
@@ -526,7 +562,8 @@ ${path}`
             color: '#64748b',
           }}>
             <span><kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>↑↓</kbd> ניווט</span>
-            <span><kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>רווח</kbd> בחירה</span>
+            <span><kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>Enter</kbd> בחירה</span>
+            {isNavigating && <span><kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>רווח</kbd> בחירה</span>}
             <span><kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>Esc</kbd> נקה</span>
           </div>
         )}
