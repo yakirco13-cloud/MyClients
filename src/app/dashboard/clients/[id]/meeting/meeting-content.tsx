@@ -55,6 +55,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
   const [songs, setSongs] = useState(initialSongs)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(initialSelected))
+  const [selectedSongsData, setSelectedSongsData] = useState<Map<string, Song>>(new Map()) // Store full song data for selected songs
   const [filterGenre, setFilterGenre] = useState<string>('all')
   const [filterArtist, setFilterArtist] = useState<string>('all')
   const [saving, setSaving] = useState(false)
@@ -77,6 +78,25 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
   const [songCategories, setSongCategories] = useState<Map<string, string>>(new Map()) // song_id -> category_id
   const [selectedCategory, setSelectedCategory] = useState<string>('') // Current category for new songs
   const [viewingCategory, setViewingCategory] = useState<string | null>(null) // Category being viewed/edited in modal
+
+  // Load selected songs data on mount
+  useEffect(() => {
+    const loadSelectedSongs = async () => {
+      if (initialSelected.length === 0) return
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('songs')
+        .select('*')
+        .in('id', initialSelected)
+      
+      if (data) {
+        const map = new Map<string, Song>()
+        data.forEach(song => map.set(song.id, song))
+        setSelectedSongsData(map)
+      }
+    }
+    loadSelectedSongs()
+  }, [initialSelected])
 
   // Load unique artists, popularity, and categories on mount
   useEffect(() => {
@@ -305,10 +325,14 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
   // Toggle song selection
   const toggleSong = async (songId: string, clearSearch = false) => {
     const newSelected = new Set(selectedIds)
+    const newSongsData = new Map(selectedSongsData)
     const isAdding = !newSelected.has(songId)
     
     if (isAdding) {
       newSelected.add(songId)
+      // Store song data
+      const song = songs.find(s => s.id === songId)
+      if (song) newSongsData.set(songId, song)
       // Also set category if selected
       if (selectedCategory) {
         const newSongCategories = new Map(songCategories)
@@ -317,12 +341,14 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
       }
     } else {
       newSelected.delete(songId)
+      newSongsData.delete(songId)
       // Remove category assignment
       const newSongCategories = new Map(songCategories)
       newSongCategories.delete(songId)
       setSongCategories(newSongCategories)
     }
     setSelectedIds(newSelected)
+    setSelectedSongsData(newSongsData)
 
     // Clear search and refocus if requested
     if (clearSearch) {
@@ -332,7 +358,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
     }
 
     // Show feedback
-    const song = songs.find(s => s.id === songId)
+    const song = songs.find(s => s.id === songId) || selectedSongsData.get(songId)
     const categoryName = selectedCategory ? categories.find(c => c.id === selectedCategory)?.name : ''
     if (song) {
       if (isAdding) {
@@ -417,23 +443,23 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
 
   // Export playlist as M3U (Rekordbox Import Playlist)
   const exportPlaylist = () => {
-    const selectedSongs = songs.filter(s => selectedIds.has(s.id))
+    // Get all selected songs from selectedSongsData (not just visible ones)
+    const allSelectedSongs = Array.from(selectedIds).map(id => 
+      selectedSongsData.get(id) || songs.find(s => s.id === id)
+    ).filter(Boolean) as Song[]
     
-    if (selectedSongs.length === 0) {
+    if (allSelectedSongs.length === 0) {
       toast.error('לא נבחרו שירים')
       return
     }
 
     const playlistName = `${client.name}${client.partner_name ? ' & ' + client.partner_name : ''}`
-
-    // Check if songs have file locations
-    const songsWithLocation = selectedSongs.filter(s => s.location)
     
     // Group songs by category
-    const songsByCategory = new Map<string, typeof selectedSongs>()
-    const uncategorized: typeof selectedSongs = []
+    const songsByCategory = new Map<string, Song[]>()
+    const uncategorized: Song[] = []
     
-    for (const song of selectedSongs) {
+    for (const song of allSelectedSongs) {
       const categoryId = songCategories.get(song.id)
       if (categoryId) {
         if (!songsByCategory.has(categoryId)) {
@@ -445,73 +471,14 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
       }
     }
 
-    // If no songs have location, export as TXT list instead
-    if (songsWithLocation.length === 0) {
-      const createTXT = (songs: typeof selectedSongs, name: string) => {
-        return `${name}\n${'='.repeat(name.length)}\n\n${songs.map(song => {
-          const artist = song.artist || ''
-          return artist ? `${song.title} - ${artist}` : song.title
-        }).join('\n')}`
-      }
-
-      // Single file for all songs
-      if (categories.length === 0 || songsByCategory.size === 0) {
-        const txtContent = createTXT(selectedSongs, playlistName)
-        const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `${playlistName.replace(/\s+/g, '_')}.txt`
-        a.click()
-        URL.revokeObjectURL(url)
-        toast.success(`יוצאו ${selectedSongs.length} שירים כרשימת טקסט (ללא נתיבי קבצים)`)
-        return
-      }
-
-      // Multiple TXT files by category
-      const downloadTXT = (content: string, filename: string) => {
-        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = filename
-        a.click()
-        URL.revokeObjectURL(url)
-      }
-
-      let downloadCount = 0
-      const totalFiles = songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)
-
-      Array.from(songsByCategory.entries()).forEach(([catId, catSongs], index) => {
-        const category = categories.find(c => c.id === catId)
-        const catName = category?.name || 'Unknown'
-        const filename = `${playlistName.replace(/\s+/g, '_')}_${catName.replace(/\s+/g, '_')}.txt`
-        
-        setTimeout(() => {
-          downloadTXT(createTXT(catSongs, `${playlistName} - ${catName}`), filename)
-          downloadCount++
-          if (downloadCount === totalFiles) {
-            toast.success(`יוצאו ${totalFiles} רשימות טקסט (ללא נתיבי קבצים)`)
-          }
-        }, index * 300)
-      })
-
-      if (uncategorized.length > 0) {
-        setTimeout(() => {
-          const filename = `${playlistName.replace(/\s+/g, '_')}_ללא_קטגוריה.txt`
-          downloadTXT(createTXT(uncategorized, `${playlistName} - ללא קטגוריה`), filename)
-          downloadCount++
-          if (downloadCount === totalFiles) {
-            toast.success(`יוצאו ${totalFiles} רשימות טקסט (ללא נתיבי קבצים)`)
-          }
-        }, songsByCategory.size * 300)
-      }
-      return
-    }
-
-    // Create M3U content for a list of songs (only songs with locations)
-    const createM3U = (songs: typeof selectedSongs, name: string) => {
+    // Create M3U content - only include songs with locations
+    const createM3U = (songs: Song[], name: string) => {
       const songsWithLoc = songs.filter(s => s.location)
+      if (songsWithLoc.length === 0) {
+        return `#EXTM3U
+#PLAYLIST:${name}
+# No songs with file paths in this category`
+      }
       return `#EXTM3U
 #PLAYLIST:${name}
 ${songsWithLoc.map(song => {
@@ -523,22 +490,6 @@ ${path}`
 }).join('\n')}`
     }
 
-    // If no categories defined or all songs uncategorized, just download single M3U
-    if (categories.length === 0 || (songsByCategory.size === 0 && uncategorized.length > 0)) {
-      const m3uContent = createM3U(selectedSongs, playlistName)
-      const blob = new Blob([m3uContent], { type: 'audio/x-mpegurl;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${playlistName.replace(/\s+/g, '_')}.m3u`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success(`יוצאו ${songsWithLocation.length} שירים`)
-      return
-    }
-
-    // Multiple categories - create separate M3U files
-    // Download each one with a small delay
     const downloadM3U = (content: string, filename: string) => {
       const blob = new Blob([content], { type: 'audio/x-mpegurl;charset=utf-8' })
       const url = URL.createObjectURL(blob)
@@ -549,10 +500,18 @@ ${path}`
       URL.revokeObjectURL(url)
     }
 
+    // If no categories or all uncategorized, single M3U
+    if (categories.length === 0 || (songsByCategory.size === 0 && uncategorized.length > 0)) {
+      downloadM3U(createM3U(allSelectedSongs, playlistName), `${playlistName.replace(/\s+/g, '_')}.m3u`)
+      const withLoc = allSelectedSongs.filter(s => s.location).length
+      toast.success(`יוצא פלייליסט עם ${withLoc} שירים (מתוך ${allSelectedSongs.length})`)
+      return
+    }
+
+    // Multiple M3U files - one per category
     let downloadCount = 0
     const totalFiles = songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)
     
-    // Download category playlists
     Array.from(songsByCategory.entries()).forEach(([catId, catSongs], index) => {
       const category = categories.find(c => c.id === catId)
       const catName = category?.name || 'Unknown'
@@ -562,26 +521,27 @@ ${path}`
         downloadM3U(createM3U(catSongs, `${playlistName} - ${catName}`), filename)
         downloadCount++
         if (downloadCount === totalFiles) {
-          toast.success(`יוצאו ${totalFiles} פלייליסטים!`)
+          const totalWithLoc = allSelectedSongs.filter(s => s.location).length
+          toast.success(`יוצאו ${totalFiles} פלייליסטים (${totalWithLoc} שירים עם נתיבים)`)
         }
       }, index * 300)
     })
 
-    // Download uncategorized if exists
     if (uncategorized.length > 0) {
       setTimeout(() => {
         const filename = `${playlistName.replace(/\s+/g, '_')}_ללא_קטגוריה.m3u`
         downloadM3U(createM3U(uncategorized, `${playlistName} - ללא קטגוריה`), filename)
         downloadCount++
         if (downloadCount === totalFiles) {
-          toast.success(`יוצאו ${totalFiles} פלייליסטים!`)
+          const totalWithLoc = allSelectedSongs.filter(s => s.location).length
+          toast.success(`יוצאו ${totalFiles} פלייליסטים (${totalWithLoc} שירים עם נתיבים)`)
         }
       }, songsByCategory.size * 300)
     }
   }
 
   const selectedSongs = songs.filter(s => selectedIds.has(s.id))
-
+      URL.revokeObjectURL(url)
   return (
     <div style={{ 
       minHeight: '100vh', 
@@ -807,27 +767,6 @@ ${path}`
                 <option key={a} value={a}>{a}</option>
               ))}
             </select>
-
-            {selectedIds.size > 0 && (
-              <button
-                onClick={clearAll}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '10px 14px',
-                  background: 'rgba(239, 68, 68, 0.2)',
-                  border: '1px solid rgba(239, 68, 68, 0.5)',
-                  borderRadius: '8px',
-                  color: '#ef4444',
-                  fontSize: '14px',
-                  cursor: 'pointer',
-                }}
-              >
-                <Trash2 size={16} />
-                נקה הכל
-              </button>
-            )}
           </div>
         )}
 
@@ -1171,7 +1110,7 @@ ${path}`
                   return catId === viewingCategory
                 })
                 .map(songId => {
-                  const song = songs.find(s => s.id === songId)
+                  const song = selectedSongsData.get(songId) || songs.find(s => s.id === songId)
                   if (!song) return null
                   return (
                     <div

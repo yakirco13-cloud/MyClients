@@ -546,7 +546,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
     if (!confirm('לסרוק את הספרייה לשירים דומים? זה עלול לקחת מספר שניות.')) return
 
     setReviewLoading(true)
-    setImportProgress('סורק שירים דומים...')
+    setImportProgress('טוען שירים...')
 
     try {
       const supabase = createClient()
@@ -559,6 +559,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       const PAGE_SIZE = 1000
 
       while (true) {
+        setImportProgress(`טוען שירים... (${allSongs.length})`)
         const { data: pageSongs } = await supabase
           .from('songs')
           .select('id, title, artist, created_at')
@@ -574,37 +575,73 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
 
       if (allSongs.length === 0) {
         toast.info('אין שירים בספרייה')
+        setReviewLoading(false)
+        setImportProgress(null)
         return
       }
 
-      setImportProgress('מנתח דמיון בין שירים...')
+      setImportProgress(`מנתח ${allSongs.length} שירים...`)
+      
+      // Allow UI to update
+      await new Promise(resolve => setTimeout(resolve, 100))
 
-      // Group similar songs
+      // Pre-compute cleaned titles for all songs
+      const songsWithClean = allSongs.map(song => ({
+        ...song,
+        cleanedTitle: extractCoreSong(song.title, song.artist)
+      }))
+
+      // Group by first 10 chars of cleaned title (optimization)
+      const buckets = new Map<string, typeof songsWithClean>()
+      for (const song of songsWithClean) {
+        const key = song.cleanedTitle.substring(0, 10)
+        if (!buckets.has(key)) buckets.set(key, [])
+        buckets.get(key)!.push(song)
+      }
+
+      setImportProgress('מחפש כפילויות...')
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // Find duplicates within each bucket
       const groups: DuplicateGroup[] = []
       const processed = new Set<string>()
+      let bucketsProcessed = 0
+      const totalBuckets = buckets.size
 
-      for (let i = 0; i < allSongs.length; i++) {
-        if (processed.has(allSongs[i].id)) continue
+      for (const [, bucket] of buckets) {
+        bucketsProcessed++
+        if (bucketsProcessed % 100 === 0) {
+          setImportProgress(`מחפש כפילויות... (${Math.round(bucketsProcessed / totalBuckets * 100)}%)`)
+          await new Promise(resolve => setTimeout(resolve, 0))
+        }
 
-        const similar: typeof allSongs = [allSongs[i]]
-        processed.add(allSongs[i].id)
+        // Only check within bucket (songs with similar prefix)
+        for (let i = 0; i < bucket.length; i++) {
+          if (processed.has(bucket[i].id)) continue
 
-        for (let j = i + 1; j < allSongs.length; j++) {
-          if (processed.has(allSongs[j].id)) continue
+          const similar: typeof allSongs = [bucket[i]]
+          processed.add(bucket[i].id)
 
-          if (areDuplicates(allSongs[i], allSongs[j])) {
-            similar.push(allSongs[j])
-            processed.add(allSongs[j].id)
+          for (let j = i + 1; j < bucket.length; j++) {
+            if (processed.has(bucket[j].id)) continue
+
+            // Quick check - if cleaned titles are very different length, skip
+            if (Math.abs(bucket[i].cleanedTitle.length - bucket[j].cleanedTitle.length) > 5) continue
+
+            if (areDuplicates(bucket[i], bucket[j])) {
+              similar.push(bucket[j])
+              processed.add(bucket[j].id)
+            }
+          }
+
+          if (similar.length > 1) {
+            const keepIds = new Set<string>([similar[0].id])
+            groups.push({ songs: similar, keepIds })
           }
         }
-
-        // Only add groups with duplicates
-        if (similar.length > 1) {
-          // Default: keep first one (oldest)
-          const keepIds = new Set<string>([similar[0].id])
-          groups.push({ songs: similar, keepIds })
-        }
       }
+
+      setImportProgress(null)
 
       if (groups.length === 0) {
         toast.success('לא נמצאו שירים דומים!')
