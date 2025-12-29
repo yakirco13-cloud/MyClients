@@ -116,9 +116,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
       
       if (categoryData) {
         setCategories(categoryData)
-        if (categoryData.length > 0) {
-          setSelectedCategory(categoryData[0].id)
-        }
+        // Don't auto-select - user must explicitly choose
       }
       
       // Load song-category assignments for this client
@@ -715,27 +713,6 @@ ${uncategorized.map(song => `          <TRACK Key="${song.rekordbox_id || song.i
               ))}
             </select>
 
-            {categories.length > 0 && (
-              <select
-                value={selectedCategory}
-                onChange={e => setSelectedCategory(e.target.value)}
-                style={{
-                  padding: '10px 14px',
-                  background: selectedCategory ? categories.find(c => c.id === selectedCategory)?.color + '33' : 'rgba(255,255,255,0.1)',
-                  border: '1px solid',
-                  borderColor: selectedCategory ? categories.find(c => c.id === selectedCategory)?.color : 'rgba(255,255,255,0.2)',
-                  borderRadius: '8px',
-                  color: '#fff',
-                  fontSize: '14px',
-                }}
-              >
-                <option value="">ללא קטגוריה</option>
-                {categories.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            )}
-
             {selectedIds.size > 0 && (
               <button
                 onClick={clearAll}
@@ -780,6 +757,54 @@ ${uncategorized.map(song => `          <TRACK Key="${song.rekordbox_id || song.i
 
       {/* Songs List */}
       <div ref={listRef} style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
+        {/* Category Buttons - Always Visible */}
+        {categories.length > 0 && (
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '10px' }}>
+              בחר קטגוריה לפני הוספת שירים:
+            </div>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setSelectedCategory('')}
+                style={{
+                  padding: '10px 18px',
+                  borderRadius: '10px',
+                  border: '2px solid',
+                  borderColor: !selectedCategory ? '#fff' : 'rgba(255,255,255,0.2)',
+                  background: !selectedCategory ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)',
+                  color: !selectedCategory ? '#fff' : '#94a3b8',
+                  fontSize: '14px',
+                  fontWeight: !selectedCategory ? 600 : 400,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+              >
+                ללא קטגוריה
+              </button>
+              {categories.map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  style={{
+                    padding: '10px 18px',
+                    borderRadius: '10px',
+                    border: '2px solid',
+                    borderColor: selectedCategory === cat.id ? cat.color : 'rgba(255,255,255,0.2)',
+                    background: selectedCategory === cat.id ? cat.color + '33' : 'rgba(255,255,255,0.05)',
+                    color: selectedCategory === cat.id ? cat.color : '#94a3b8',
+                    fontSize: '14px',
+                    fontWeight: selectedCategory === cat.id ? 600 : 400,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ 
           fontSize: '13px', 
           color: '#64748b', 
