@@ -26,10 +26,11 @@ type Props = {
   totalCount: number
 }
 
-export default function SongsContent({ songs: initialSongs, totalCount }: Props) {
+export default function SongsContent({ songs: initialSongs, totalCount: initialCount }: Props) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [songs, setSongs] = useState(initialSongs)
+  const [totalCount, setTotalCount] = useState(initialCount)
   const [searchQuery, setSearchQuery] = useState('')
   const [importing, setImporting] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -41,12 +42,13 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       song.artist?.toLowerCase().includes(query)
   })
 
-  // Parse XML in browser
+  // Parse XML in browser with deduplication
   const parseXMLInBrowser = (text: string) => {
     const parser = new DOMParser()
     const xml = parser.parseFromString(text, 'text/xml')
     const tracks = xml.querySelectorAll('TRACK')
-    const songs: Array<{
+    
+    type ParsedSong = {
       title: string
       artist: string | null
       album: string | null
@@ -58,7 +60,15 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       date_added: string | null
       rekordbox_id: string | null
       location: string | null
-    }> = []
+    }
+    
+    // Use Map for deduplication (key = title + artist)
+    const songMap = new Map<string, ParsedSong>()
+    
+    // Helper to create unique key
+    const getSongKey = (title: string, artist: string | null) => {
+      return `${title.toLowerCase().trim()}|||${(artist || '').toLowerCase().trim()}`
+    }
 
     tracks.forEach(track => {
       const title = track.getAttribute('Name')?.trim()
@@ -68,6 +78,12 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       const kind = track.getAttribute('Kind') || ''
       const totalTime = parseInt(track.getAttribute('TotalTime') || '0')
       if (kind === 'WAV File' && totalTime < 30) return
+
+      const artist = track.getAttribute('Artist')?.trim() || null
+      const key = getSongKey(title, artist)
+      
+      // Skip if already seen
+      if (songMap.has(key)) return
 
       const bpmStr = track.getAttribute('AverageBpm')
       const bpm = bpmStr ? parseFloat(bpmStr) : null
@@ -89,9 +105,9 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
         return `${mins}:${s.toString().padStart(2, '0')}`
       }
 
-      songs.push({
+      songMap.set(key, {
         title,
-        artist: track.getAttribute('Artist')?.trim() || null,
+        artist,
         album: track.getAttribute('Album')?.trim() || null,
         bpm: bpm && bpm > 0 ? bpm : null,
         key: track.getAttribute('Tonality')?.trim() || null,
@@ -104,7 +120,7 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       })
     })
 
-    return songs
+    return Array.from(songMap.values())
   }
 
   const [importProgress, setImportProgress] = useState<string | null>(null)
@@ -146,12 +162,15 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
         router.refresh()
         
         const supabase = createClient()
-        const { data } = await supabase
+        const { data, count } = await supabase
           .from('songs')
-          .select('*')
+          .select('*', { count: 'exact' })
           .order('title')
         
-        if (data) setSongs(data)
+        if (data) {
+          setSongs(data)
+          setTotalCount(count || data.length)
+        }
         return
       }
 
@@ -188,14 +207,17 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       toast.success(`${totalImported} שירים יובאו בהצלחה!${totalSkipped > 0 ? ` (${totalSkipped} כפילויות דולגו)` : ''}`)
       router.refresh()
       
-      // Reload songs
+      // Reload songs with count
       const supabase = createClient()
-      const { data } = await supabase
+      const { data, count } = await supabase
         .from('songs')
-        .select('*')
+        .select('*', { count: 'exact' })
         .order('title')
       
-      if (data) setSongs(data)
+      if (data) {
+        setSongs(data)
+        setTotalCount(count || data.length)
+      }
       
     } catch (error) {
       console.error('Import error:', error)
@@ -215,6 +237,7 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
       const supabase = createClient()
       await supabase.from('songs').delete().eq('id', id)
       setSongs(songs.filter(s => s.id !== id))
+      setTotalCount(prev => prev - 1)
       toast.success('השיר נמחק')
     } catch (error) {
       toast.error('שגיאה במחיקה')
@@ -234,11 +257,89 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
 
       await supabase.from('songs').delete().eq('user_id', user.id)
       setSongs([])
+      setTotalCount(0)
       toast.success('כל השירים נמחקו')
     } catch (error) {
       toast.error('שגיאה במחיקה')
     } finally {
       setImporting(false)
+    }
+  }
+
+  const handleDeleteDuplicates = async () => {
+    if (!confirm('למחוק שירים כפולים? יישמר רק העותק הראשון של כל שיר.')) return
+    
+    setImporting(true)
+    setImportProgress('מחפש כפילויות...')
+    
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Get all songs
+      const { data: allSongs } = await supabase
+        .from('songs')
+        .select('id, title, artist, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true })
+
+      if (!allSongs || allSongs.length === 0) {
+        toast.info('אין שירים בספרייה')
+        return
+      }
+
+      // Find duplicates (keep first occurrence)
+      const seen = new Map<string, string>() // key -> first id
+      const duplicateIds: string[] = []
+
+      for (const song of allSongs) {
+        const key = `${(song.title || '').toLowerCase().trim()}|||${(song.artist || '').toLowerCase().trim()}`
+        
+        if (seen.has(key)) {
+          duplicateIds.push(song.id)
+        } else {
+          seen.set(key, song.id)
+        }
+      }
+
+      if (duplicateIds.length === 0) {
+        toast.success('לא נמצאו שירים כפולים!')
+        return
+      }
+
+      setImportProgress(`מוחק ${duplicateIds.length} כפילויות...`)
+
+      // Delete duplicates in batches
+      const BATCH_SIZE = 100
+      for (let i = 0; i < duplicateIds.length; i += BATCH_SIZE) {
+        const batch = duplicateIds.slice(i, i + BATCH_SIZE)
+        await supabase
+          .from('songs')
+          .delete()
+          .in('id', batch)
+      }
+
+      // Refresh songs list
+      const { data: updatedSongs, count } = await supabase
+        .from('songs')
+        .select('*', { count: 'exact' })
+        .eq('user_id', user.id)
+        .order('title')
+
+      if (updatedSongs) {
+        setSongs(updatedSongs)
+        setTotalCount(count || updatedSongs.length)
+      }
+
+      toast.success(`נמחקו ${duplicateIds.length} שירים כפולים!`)
+      
+    } catch (error) {
+      console.error('Delete duplicates error:', error)
+      toast.error('שגיאה במחיקת כפילויות')
+    } finally {
+      setImporting(false)
+      setImportProgress(null)
     }
   }
 
@@ -262,25 +363,46 @@ export default function SongsContent({ songs: initialSongs, totalCount }: Props)
 
         <div style={{ display: 'flex', gap: '12px' }}>
           {songs.length > 0 && (
-            <button
-              onClick={handleDeleteAll}
-              disabled={importing}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '10px 16px',
-                background: '#fff',
-                border: '1px solid #fecaca',
-                borderRadius: '8px',
-                color: '#ef4444',
-                fontSize: '14px',
-                cursor: 'pointer',
-              }}
-            >
-              <Trash2 size={16} />
-              מחק הכל
-            </button>
+            <>
+              <button
+                onClick={handleDeleteDuplicates}
+                disabled={importing}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '10px 16px',
+                  background: '#fff',
+                  border: '1px solid #fcd34d',
+                  borderRadius: '8px',
+                  color: '#d97706',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                <RefreshCw size={16} />
+                מחק כפילויות
+              </button>
+              <button
+                onClick={handleDeleteAll}
+                disabled={importing}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '10px 16px',
+                  background: '#fff',
+                  border: '1px solid #fecaca',
+                  borderRadius: '8px',
+                  color: '#ef4444',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                <Trash2 size={16} />
+                מחק הכל
+              </button>
+            </>
           )}
           <button
             onClick={() => fileInputRef.current?.click()}

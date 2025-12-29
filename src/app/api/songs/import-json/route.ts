@@ -15,6 +15,13 @@ type SongInput = {
   location: string | null
 }
 
+// Create a unique key for deduplication
+function getSongKey(title: string, artist: string | null): string {
+  const normalizedTitle = (title || '').toLowerCase().trim()
+  const normalizedArtist = (artist || '').toLowerCase().trim()
+  return `${normalizedTitle}|||${normalizedArtist}`
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
@@ -30,27 +37,63 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No songs provided' }, { status: 400 })
     }
 
-    // Add user_id to all songs
-    const songsWithUser = songs.map(song => ({
+    // Step 1: Dedupe incoming songs (keep first occurrence)
+    const seenKeys = new Set<string>()
+    const uniqueSongs: SongInput[] = []
+    
+    for (const song of songs) {
+      const key = getSongKey(song.title, song.artist)
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key)
+        uniqueSongs.push(song)
+      }
+    }
+
+    // Step 2: Get all existing songs for this user (title + artist)
+    const { data: existingSongs } = await supabase
+      .from('songs')
+      .select('title, artist')
+      .eq('user_id', user.id)
+    
+    const existingKeys = new Set<string>()
+    if (existingSongs) {
+      for (const song of existingSongs) {
+        existingKeys.add(getSongKey(song.title, song.artist))
+      }
+    }
+
+    // Step 3: Filter out songs that already exist
+    const newSongs = uniqueSongs.filter(song => {
+      const key = getSongKey(song.title, song.artist)
+      return !existingKeys.has(key)
+    })
+
+    const skipped = songs.length - newSongs.length
+
+    if (newSongs.length === 0) {
+      return NextResponse.json({
+        success: true,
+        imported: 0,
+        skipped,
+        message: `כל השירים כבר קיימים בספרייה (${skipped} כפילויות דולגו)`
+      })
+    }
+
+    // Step 4: Insert new songs in batches
+    const songsWithUser = newSongs.map(song => ({
       user_id: user.id,
       ...song,
     }))
 
-    // Batch insert (100 at a time) with upsert to handle duplicates
     const BATCH_SIZE = 100
     let imported = 0
-    let skipped = 0
     
     for (let i = 0; i < songsWithUser.length; i += BATCH_SIZE) {
       const batch = songsWithUser.slice(i, i + BATCH_SIZE)
       
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('songs')
-        .upsert(batch, { 
-          onConflict: 'user_id,title,artist',
-          ignoreDuplicates: true 
-        })
-        .select('id')
+        .insert(batch)
       
       if (error) {
         console.error('Batch insert error:', error)
@@ -60,11 +103,7 @@ export async function POST(request: NextRequest) {
             .from('songs')
             .insert(song)
           
-          if (singleError) {
-            if (singleError.code === '23505') {
-              skipped++
-            }
-          } else {
+          if (!singleError) {
             imported++
           }
         }
