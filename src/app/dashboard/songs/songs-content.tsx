@@ -59,7 +59,6 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       rating: number | null
       date_added: string | null
       rekordbox_id: string | null
-      location: string | null
     }
     
     const songs: ParsedSong[] = []
@@ -77,14 +76,6 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       const bpm = bpmStr ? parseFloat(bpmStr) : null
       const ratingStr = track.getAttribute('Rating')
       const rating = ratingStr ? parseInt(ratingStr) : null
-
-      // Get and decode location
-      let location = track.getAttribute('Location')
-      if (location) {
-        try {
-          location = decodeURIComponent(location).replace(/^file:\/\/localhost\//, '')
-        } catch (e) {}
-      }
 
       // Format duration
       const formatDuration = (secs: number) => {
@@ -104,7 +95,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         rating: rating && rating > 0 ? rating : null,
         date_added: track.getAttribute('DateAdded') || null,
         rekordbox_id: track.getAttribute('TrackID') || null,
-        location,
+        // NOTE: location removed - too large for API
       })
     })
 
@@ -118,49 +109,86 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
     if (!file) return
 
     setImporting(true)
-    setImportProgress('מעלה קובץ לשרת...')
+    setImportProgress('קורא קובץ...')
     
     try {
-      // Send raw file to server - server does all parsing
-      const formData = new FormData()
-      formData.append('file', file)
-
-      setImportProgress('מייבא שירים... (זה יכול לקחת דקה)')
-
-      const response = await fetch('/api/songs/import', {
-        method: 'POST',
-        body: formData,
-      })
-
-      const result = await response.json()
-
-      // Log server details for debugging
-      console.log('Import result:', result)
-      if (result.logs) {
-        console.log('Server logs:', result.logs.join('\n'))
+      const text = await file.text()
+      console.log(`File size: ${(text.length / 1024 / 1024).toFixed(2)} MB`)
+      
+      setImportProgress('מנתח שירים...')
+      const parsedSongs = parseXMLInBrowser(text)
+      console.log(`Parsed ${parsedSongs.length} songs from XML`)
+      
+      if (parsedSongs.length === 0) {
+        throw new Error('לא נמצאו שירים בקובץ')
       }
 
-      if (!response.ok) {
-        throw new Error(result.error || 'Import failed')
+      // Send in small chunks of 50 songs (Vercel has 4.5MB limit)
+      const CHUNK_SIZE = 50
+      let totalImported = 0
+      let totalErrors = 0
+      const allErrors: string[] = []
+      
+      const totalChunks = Math.ceil(parsedSongs.length / CHUNK_SIZE)
+      console.log(`Sending ${totalChunks} chunks of ${CHUNK_SIZE} songs`)
+      
+      for (let i = 0; i < parsedSongs.length; i += CHUNK_SIZE) {
+        const chunkNum = Math.floor(i / CHUNK_SIZE) + 1
+        const chunk = parsedSongs.slice(i, i + CHUNK_SIZE)
+        
+        setImportProgress(`מייבא חלק ${chunkNum}/${totalChunks} (${Math.min(i + CHUNK_SIZE, parsedSongs.length)}/${parsedSongs.length})...`)
+        
+        try {
+          const response = await fetch('/api/songs/import-json', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ songs: chunk }),
+          })
+
+          const result = await response.json()
+          
+          if (!response.ok) {
+            console.error(`Chunk ${chunkNum} failed:`, result.error)
+            allErrors.push(`חלק ${chunkNum}: ${result.error}`)
+            totalErrors += chunk.length
+          } else {
+            totalImported += result.imported || 0
+            totalErrors += result.errors || 0
+            console.log(`Chunk ${chunkNum}: imported ${result.imported}, errors ${result.errors || 0}`)
+          }
+        } catch (chunkError) {
+          console.error(`Chunk ${chunkNum} exception:`, chunkError)
+          allErrors.push(`חלק ${chunkNum}: ${chunkError instanceof Error ? chunkError.message : 'שגיאה'}`)
+          totalErrors += chunk.length
+        }
       }
 
-      // Show detailed result
-      const msg = `יובאו ${result.inserted} שירים מתוך ${result.parsed} שנותחו`
-      if (result.errors > 0) {
-        toast.error(`${msg} (${result.errors} שגיאות)`)
-        console.error('Error details:', result.errorDetails)
+      console.log(`DONE: ${totalImported} imported, ${totalErrors} errors`)
+      
+      if (allErrors.length > 0) {
+        console.error('Errors:', allErrors)
+      }
+
+      // Show result
+      if (totalErrors > 0) {
+        toast.error(`יובאו ${totalImported} שירים (${totalErrors} שגיאות)`)
       } else {
-        toast.success(msg)
+        toast.success(`${totalImported} שירים יובאו בהצלחה!`)
       }
 
       router.refresh()
       
-      // Reload songs with count
+      // Reload songs with count (with pagination)
       const supabase = createClient()
-      const { data, count } = await supabase
+      const { count } = await supabase
         .from('songs')
-        .select('*', { count: 'exact' })
+        .select('*', { count: 'exact', head: true })
+      
+      const { data } = await supabase
+        .from('songs')
+        .select('*')
         .order('title')
+        .limit(500)
       
       if (data) {
         setSongs(data)

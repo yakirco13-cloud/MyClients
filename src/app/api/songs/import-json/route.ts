@@ -12,7 +12,6 @@ type SongInput = {
   rating: number | null
   date_added: string | null
   rekordbox_id: string | null
-  location: string | null
 }
 
 export async function POST(request: NextRequest) {
@@ -30,48 +29,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No songs provided' }, { status: 400 })
     }
 
-    // Add user_id to all songs - NO deduplication, just insert everything
+    // Add user_id to all songs
     const songsWithUser = songs.map(song => ({
       user_id: user.id,
       ...song,
     }))
 
-    // Insert in batches
-    const BATCH_SIZE = 100
-    let imported = 0
-    let errors = 0
-    
-    for (let i = 0; i < songsWithUser.length; i += BATCH_SIZE) {
-      const batch = songsWithUser.slice(i, i + BATCH_SIZE)
+    // Insert all at once
+    const { data, error } = await supabase
+      .from('songs')
+      .insert(songsWithUser)
+      .select('id')
+
+    if (error) {
+      console.error('Batch insert error:', error)
       
-      const { error } = await supabase
-        .from('songs')
-        .insert(batch)
+      // Try one by one as fallback
+      let imported = 0
+      let errors = 0
       
-      if (error) {
-        console.error('Batch insert error:', error)
-        // Try one by one
-        for (const song of batch) {
-          const { error: singleError } = await supabase
-            .from('songs')
-            .insert(song)
-          
-          if (singleError) {
-            errors++
-          } else {
-            imported++
-          }
+      for (const song of songsWithUser) {
+        const { error: singleError } = await supabase
+          .from('songs')
+          .insert(song)
+        
+        if (singleError) {
+          errors++
+        } else {
+          imported++
         }
-      } else {
-        imported += batch.length
       }
+      
+      return NextResponse.json({
+        success: true,
+        imported,
+        errors,
+      })
     }
 
     return NextResponse.json({
       success: true,
-      imported,
-      errors,
-      message: `${imported} שירים יובאו!${errors > 0 ? ` (${errors} שגיאות)` : ''}`
+      imported: songsWithUser.length,
+      errors: 0,
     })
 
   } catch (error) {
