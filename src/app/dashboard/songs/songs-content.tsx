@@ -65,7 +65,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
     const loadPopularity = async () => {
       const supabase = createClient()
       const { data } = await supabase
-        .from('client_songs')
+        .from('client_playlists')
         .select('song_id')
       
       if (data) {

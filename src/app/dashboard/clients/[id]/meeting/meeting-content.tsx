@@ -76,6 +76,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
   const [categories, setCategories] = useState<SongCategory[]>([])
   const [songCategories, setSongCategories] = useState<Map<string, string>>(new Map()) // song_id -> category_id
   const [selectedCategory, setSelectedCategory] = useState<string>('') // Current category for new songs
+  const [viewingCategory, setViewingCategory] = useState<string | null>(null) // Category being viewed/edited in modal
 
   // Load unique artists, popularity, and categories on mount
   useEffect(() => {
@@ -97,7 +98,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
       
       // Load popularity counts
       const { data: popularityData } = await supabase
-        .from('client_songs')
+        .from('client_playlists')
         .select('song_id')
       
       if (popularityData) {
@@ -266,7 +267,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
           e.preventDefault()
           const song = filteredSongs[highlightedIndex]
           if (song) {
-            toggleSong(song.id, true) // true = clear search after
+            toggleSong(song.id) // Don't clear search
           }
         }
         // If not navigating, let the space be typed normally in the search
@@ -278,7 +279,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
           e.preventDefault()
           const song = filteredSongs[highlightedIndex]
           if (song) {
-            toggleSong(song.id, true)
+            toggleSong(song.id) // Don't clear search
           }
         }
       }
@@ -427,11 +428,7 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
 
     // Check if songs have file locations
     const songsWithLocation = selectedSongs.filter(s => s.location)
-    if (songsWithLocation.length === 0) {
-      toast.error('השירים לא יובאו מ-Rekordbox XML. יש לייבא את הספרייה מחדש.')
-      return
-    }
-
+    
     // Group songs by category
     const songsByCategory = new Map<string, typeof selectedSongs>()
     const uncategorized: typeof selectedSongs = []
@@ -448,7 +445,71 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
       }
     }
 
-    // Create M3U content for a list of songs
+    // If no songs have location, export as TXT list instead
+    if (songsWithLocation.length === 0) {
+      const createTXT = (songs: typeof selectedSongs, name: string) => {
+        return `${name}\n${'='.repeat(name.length)}\n\n${songs.map(song => {
+          const artist = song.artist || ''
+          return artist ? `${song.title} - ${artist}` : song.title
+        }).join('\n')}`
+      }
+
+      // Single file for all songs
+      if (categories.length === 0 || songsByCategory.size === 0) {
+        const txtContent = createTXT(selectedSongs, playlistName)
+        const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${playlistName.replace(/\s+/g, '_')}.txt`
+        a.click()
+        URL.revokeObjectURL(url)
+        toast.success(`יוצאו ${selectedSongs.length} שירים כרשימת טקסט (ללא נתיבי קבצים)`)
+        return
+      }
+
+      // Multiple TXT files by category
+      const downloadTXT = (content: string, filename: string) => {
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+      }
+
+      let downloadCount = 0
+      const totalFiles = songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)
+
+      Array.from(songsByCategory.entries()).forEach(([catId, catSongs], index) => {
+        const category = categories.find(c => c.id === catId)
+        const catName = category?.name || 'Unknown'
+        const filename = `${playlistName.replace(/\s+/g, '_')}_${catName.replace(/\s+/g, '_')}.txt`
+        
+        setTimeout(() => {
+          downloadTXT(createTXT(catSongs, `${playlistName} - ${catName}`), filename)
+          downloadCount++
+          if (downloadCount === totalFiles) {
+            toast.success(`יוצאו ${totalFiles} רשימות טקסט (ללא נתיבי קבצים)`)
+          }
+        }, index * 300)
+      })
+
+      if (uncategorized.length > 0) {
+        setTimeout(() => {
+          const filename = `${playlistName.replace(/\s+/g, '_')}_ללא_קטגוריה.txt`
+          downloadTXT(createTXT(uncategorized, `${playlistName} - ללא קטגוריה`), filename)
+          downloadCount++
+          if (downloadCount === totalFiles) {
+            toast.success(`יוצאו ${totalFiles} רשימות טקסט (ללא נתיבי קבצים)`)
+          }
+        }, songsByCategory.size * 300)
+      }
+      return
+    }
+
+    // Create M3U content for a list of songs (only songs with locations)
     const createM3U = (songs: typeof selectedSongs, name: string) => {
       const songsWithLoc = songs.filter(s => s.location)
       return `#EXTM3U
@@ -855,7 +916,7 @@ ${path}`
               <div
                 key={song.id}
                 data-song-item
-                onClick={() => toggleSong(song.id, !!searchQuery)}
+                onClick={() => toggleSong(song.id)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -989,33 +1050,39 @@ ${path}`
                 ).map(c => {
                   const count = Array.from(selectedIds).filter(id => songCategories.get(id) === c.id).length
                   return (
-                    <span
+                    <button
                       key={c.id}
+                      onClick={() => setViewingCategory(c.id)}
                       style={{
                         fontSize: '12px',
-                        padding: '2px 8px',
+                        padding: '4px 10px',
                         borderRadius: '4px',
                         background: c.color + '33',
                         color: c.color,
                         border: `1px solid ${c.color}`,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
                       }}
                     >
                       {c.name}: {count}
-                    </span>
+                    </button>
                   )
                 })}
                 {Array.from(selectedIds).filter(id => !songCategories.get(id)).length > 0 && (
-                  <span
+                  <button
+                    onClick={() => setViewingCategory('uncategorized')}
                     style={{
                       fontSize: '12px',
-                      padding: '2px 8px',
+                      padding: '4px 10px',
                       borderRadius: '4px',
                       background: 'rgba(255,255,255,0.1)',
                       color: '#94a3b8',
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      cursor: 'pointer',
                     }}
                   >
                     ללא קטגוריה: {Array.from(selectedIds).filter(id => !songCategories.get(id)).length}
-                  </span>
+                  </button>
                 )}
               </div>
             </div>
@@ -1039,6 +1106,159 @@ ${path}`
               <Download size={18} />
               ייצא ל-Rekordbox
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Category Viewer Modal */}
+      {viewingCategory && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.8)',
+          zIndex: 200,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+        }}>
+          <div style={{
+            background: '#1e293b',
+            borderRadius: '16px',
+            width: '100%',
+            maxWidth: '600px',
+            maxHeight: '80vh',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              padding: '20px 24px',
+              borderBottom: '1px solid rgba(255,255,255,0.1)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#fff' }}>
+                {viewingCategory === 'uncategorized' 
+                  ? 'ללא קטגוריה' 
+                  : categories.find(c => c.id === viewingCategory)?.name || ''}
+              </h3>
+              <button
+                onClick={() => setViewingCategory(null)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#94a3b8',
+                  cursor: 'pointer',
+                  padding: '4px',
+                }}
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Songs List */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '16px 24px' }}>
+              {Array.from(selectedIds)
+                .filter(id => {
+                  const catId = songCategories.get(id)
+                  if (viewingCategory === 'uncategorized') return !catId
+                  return catId === viewingCategory
+                })
+                .map(songId => {
+                  const song = songs.find(s => s.id === songId)
+                  if (!song) return null
+                  return (
+                    <div
+                      key={songId}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        padding: '12px',
+                        background: 'rgba(255,255,255,0.05)',
+                        borderRadius: '8px',
+                        marginBottom: '8px',
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '14px', fontWeight: 500, color: '#fff' }}>
+                          {song.title}
+                        </div>
+                        {song.artist && (
+                          <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                            {song.artist}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Category Selector */}
+                      <select
+                        value={songCategories.get(songId) || ''}
+                        onChange={e => changeSongCategory(songId, e.target.value)}
+                        style={{
+                          padding: '6px 10px',
+                          background: 'rgba(255,255,255,0.1)',
+                          border: '1px solid rgba(255,255,255,0.2)',
+                          borderRadius: '6px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="">ללא קטגוריה</option>
+                        {categories.map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                      
+                      {/* Remove Button */}
+                      <button
+                        onClick={() => toggleSong(songId)}
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.2)',
+                          border: '1px solid rgba(239, 68, 68, 0.5)',
+                          borderRadius: '6px',
+                          color: '#ef4444',
+                          padding: '6px 10px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        הסר
+                      </button>
+                    </div>
+                  )
+                })}
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              padding: '16px 24px',
+              borderTop: '1px solid rgba(255,255,255,0.1)',
+              display: 'flex',
+              justifyContent: 'flex-end',
+            }}>
+              <button
+                onClick={() => setViewingCategory(null)}
+                style={{
+                  padding: '10px 20px',
+                  background: '#0ea5e9',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                סגור
+              </button>
+            </div>
           </div>
         </div>
       )}
