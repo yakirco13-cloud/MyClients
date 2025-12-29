@@ -425,6 +425,13 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
 
     const playlistName = `${client.name}${client.partner_name ? ' & ' + client.partner_name : ''}`
 
+    // Check if songs have file locations
+    const songsWithLocation = selectedSongs.filter(s => s.location)
+    if (songsWithLocation.length === 0) {
+      toast.error('השירים לא יובאו מ-Rekordbox XML. יש לייבא את הספרייה מחדש.')
+      return
+    }
+
     // Group songs by category
     const songsByCategory = new Map<string, typeof selectedSongs>()
     const uncategorized: typeof selectedSongs = []
@@ -441,51 +448,75 @@ export default function MeetingContent({ client, songs: initialSongs, selectedSo
       }
     }
 
-    // Create Rekordbox XML with folders
-    let xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
-<DJ_PLAYLISTS Version="1.0.0">
-  <PRODUCT Name="rekordbox" Version="6.0.0" Company="AlphaTheta Corporation"/>
-  <COLLECTION Entries="${selectedSongs.length}">
-${selectedSongs.map(song => `    <TRACK TrackID="${song.rekordbox_id || song.id}" Name="${escapeXml(song.title)}" Artist="${escapeXml(song.artist || '')}" Album="${escapeXml(song.album || '')}" Genre="${escapeXml(song.genre || '')}" TotalTime="${song.duration ? parseInt(song.duration.split(':')[0]) * 60 + parseInt(song.duration.split(':')[1] || '0') : 0}" ${song.location ? `Location="${escapeXml(song.location)}"` : ''}/>`).join('\n')}
-  </COLLECTION>
-  <PLAYLISTS>
-    <NODE Type="0" Name="ROOT" Count="${categories.length + (uncategorized.length > 0 ? 1 : 0) + 1}">
-      <NODE Name="${escapeXml(playlistName)}" Type="0" Count="${songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)}">
-${Array.from(songsByCategory.entries()).map(([catId, catSongs]) => {
-  const category = categories.find(c => c.id === catId)
-  return `        <NODE Name="${escapeXml(category?.name || 'ללא קטגוריה')}" Type="1" KeyType="0" Entries="${catSongs.length}">
-${catSongs.map(song => `          <TRACK Key="${song.rekordbox_id || song.id}"/>`).join('\n')}
-        </NODE>`
-}).join('\n')}
-${uncategorized.length > 0 ? `        <NODE Name="ללא קטגוריה" Type="1" KeyType="0" Entries="${uncategorized.length}">
-${uncategorized.map(song => `          <TRACK Key="${song.rekordbox_id || song.id}"/>`).join('\n')}
-        </NODE>` : ''}
-      </NODE>
-    </NODE>
-  </PLAYLISTS>
-</DJ_PLAYLISTS>`
+    // Create M3U content for a list of songs
+    const createM3U = (songs: typeof selectedSongs, name: string) => {
+      const songsWithLoc = songs.filter(s => s.location)
+      return `#EXTM3U
+#PLAYLIST:${name}
+${songsWithLoc.map(song => {
+  const artist = song.artist || 'Unknown'
+  const title = song.title
+  const path = song.location!.replace(/\\/g, '/')
+  return `#EXTINF:-1,${artist} - ${title}
+${path}`
+}).join('\n')}`
+    }
 
-    const blob = new Blob([xmlContent], { type: 'application/xml;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${playlistName.replace(/\s+/g, '_')}.xml`
-    a.click()
-    
-    URL.revokeObjectURL(url)
-    
-    toast.success(`יוצאו ${selectedSongs.length} שירים ב-${songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)} תיקיות`)
-  }
+    // If no categories defined or all songs uncategorized, just download single M3U
+    if (categories.length === 0 || (songsByCategory.size === 0 && uncategorized.length > 0)) {
+      const m3uContent = createM3U(selectedSongs, playlistName)
+      const blob = new Blob([m3uContent], { type: 'audio/x-mpegurl;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${playlistName.replace(/\s+/g, '_')}.m3u`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success(`יוצאו ${songsWithLocation.length} שירים`)
+      return
+    }
 
-  // Helper to escape XML special characters
-  const escapeXml = (str: string) => {
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;')
+    // Multiple categories - create separate M3U files
+    // Download each one with a small delay
+    const downloadM3U = (content: string, filename: string) => {
+      const blob = new Blob([content], { type: 'audio/x-mpegurl;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+
+    let downloadCount = 0
+    const totalFiles = songsByCategory.size + (uncategorized.length > 0 ? 1 : 0)
+    
+    // Download category playlists
+    Array.from(songsByCategory.entries()).forEach(([catId, catSongs], index) => {
+      const category = categories.find(c => c.id === catId)
+      const catName = category?.name || 'Unknown'
+      const filename = `${playlistName.replace(/\s+/g, '_')}_${catName.replace(/\s+/g, '_')}.m3u`
+      
+      setTimeout(() => {
+        downloadM3U(createM3U(catSongs, `${playlistName} - ${catName}`), filename)
+        downloadCount++
+        if (downloadCount === totalFiles) {
+          toast.success(`יוצאו ${totalFiles} פלייליסטים!`)
+        }
+      }, index * 300)
+    })
+
+    // Download uncategorized if exists
+    if (uncategorized.length > 0) {
+      setTimeout(() => {
+        const filename = `${playlistName.replace(/\s+/g, '_')}_ללא_קטגוריה.m3u`
+        downloadM3U(createM3U(uncategorized, `${playlistName} - ללא קטגוריה`), filename)
+        downloadCount++
+        if (downloadCount === totalFiles) {
+          toast.success(`יוצאו ${totalFiles} פלייליסטים!`)
+        }
+      }, songsByCategory.size * 300)
+    }
   }
 
   const selectedSongs = songs.filter(s => selectedIds.has(s.id))
@@ -676,6 +707,7 @@ ${uncategorized.map(song => `          <TRACK Key="${song.rekordbox_id || song.i
             padding: '0 24px 16px',
             display: 'flex',
             gap: '12px',
+            flexWrap: 'wrap',
           }}>
             <select
               value={filterGenre}
@@ -687,6 +719,7 @@ ${uncategorized.map(song => `          <TRACK Key="${song.rekordbox_id || song.i
                 borderRadius: '8px',
                 color: '#fff',
                 fontSize: '14px',
+                maxWidth: '200px',
               }}
             >
               <option value="all">כל הז׳אנרים</option>
@@ -705,6 +738,7 @@ ${uncategorized.map(song => `          <TRACK Key="${song.rekordbox_id || song.i
                 borderRadius: '8px',
                 color: '#fff',
                 fontSize: '14px',
+                maxWidth: '200px',
               }}
             >
               <option value="all">כל האמנים</option>

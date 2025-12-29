@@ -449,27 +449,97 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([])
   const [reviewLoading, setReviewLoading] = useState(false)
 
-  // Simple similarity function (normalized Levenshtein-like)
-  const getSimilarity = (s1: string, s2: string): number => {
-    const str1 = s1.toLowerCase().trim()
-    const str2 = s2.toLowerCase().trim()
+  // Clean title for comparison - remove noise
+  const cleanTitle = (title: string): string => {
+    return title
+      .toLowerCase()
+      .trim()
+      // Remove common quality/source markers
+      .replace(/\(?\d{2,3}\s*kbps\)?/gi, '')
+      .replace(/mp3conv\.ru/gi, '')
+      .replace(/yt1s\.com/gi, '')
+      .replace(/\(\s*\)/g, '') // empty parentheses
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  // Extract core song identity (title without artist prefix)
+  const extractCoreSong = (title: string, artist: string | null): string => {
+    let core = cleanTitle(title)
     
-    if (str1 === str2) return 1
-    if (str1.length === 0 || str2.length === 0) return 0
-    
-    // Check if one contains the other
-    if (str1.includes(str2) || str2.includes(str1)) {
-      const longer = Math.max(str1.length, str2.length)
-      const shorter = Math.min(str1.length, str2.length)
-      return shorter / longer
+    // If title starts with artist name, remove it
+    if (artist) {
+      const cleanArtist = artist.toLowerCase().trim()
+      if (core.startsWith(cleanArtist + ' - ')) {
+        core = core.substring(cleanArtist.length + 3)
+      } else if (core.startsWith(cleanArtist + ' ')) {
+        core = core.substring(cleanArtist.length + 1)
+      }
     }
     
-    // Simple character overlap similarity
-    const set1 = new Set(str1.split(''))
-    const set2 = new Set(str2.split(''))
-    const intersection = [...set1].filter(c => set2.has(c)).length
-    const union = new Set([...set1, ...set2]).size
-    return intersection / union
+    // Remove leading dashes
+    core = core.replace(/^[\s\-]+/, '').trim()
+    
+    return core
+  }
+
+  // Levenshtein distance
+  const levenshtein = (a: string, b: string): number => {
+    if (a.length === 0) return b.length
+    if (b.length === 0) return a.length
+    
+    const matrix: number[][] = []
+    
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i]
+    }
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j
+    }
+    
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1]
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          )
+        }
+      }
+    }
+    
+    return matrix[b.length][a.length]
+  }
+
+  // Check if two songs are likely duplicates
+  const areDuplicates = (
+    song1: { title: string; artist: string | null },
+    song2: { title: string; artist: string | null }
+  ): boolean => {
+    const core1 = extractCoreSong(song1.title, song1.artist)
+    const core2 = extractCoreSong(song2.title, song2.artist)
+    
+    // Exact match after cleaning
+    if (core1 === core2 && core1.length > 3) return true
+    
+    // One contains the other (and significant overlap)
+    if (core1.length > 5 && core2.length > 5) {
+      if (core1.includes(core2) && core2.length / core1.length > 0.7) return true
+      if (core2.includes(core1) && core1.length / core2.length > 0.7) return true
+    }
+    
+    // Levenshtein similarity (very strict - 90%+)
+    const maxLen = Math.max(core1.length, core2.length)
+    if (maxLen > 5) {
+      const distance = levenshtein(core1, core2)
+      const similarity = 1 - (distance / maxLen)
+      if (similarity >= 0.9) return true
+    }
+    
+    return false
   }
 
   const handleReviewDuplicates = async () => {
@@ -522,10 +592,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         for (let j = i + 1; j < allSongs.length; j++) {
           if (processed.has(allSongs[j].id)) continue
 
-          const similarity = getSimilarity(allSongs[i].title, allSongs[j].title)
-          
-          // 70% similarity threshold
-          if (similarity >= 0.7) {
+          if (areDuplicates(allSongs[i], allSongs[j])) {
             similar.push(allSongs[j])
             processed.add(allSongs[j].id)
           }
