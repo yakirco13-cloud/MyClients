@@ -226,32 +226,42 @@ function DropdownMenu({ clientId, onDelete, onClose }: { clientId: string; onDel
 }
 
 function AddClientModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const router = useRouter()
   const addClient = useAddClient()
   const [formData, setFormData] = useState({ name: '', partner_name: '', phone: '', email: '', event_date: '', venue_name: '', total_amount: '' })
+  const [savingType, setSavingType] = useState<'save' | 'questionnaire' | null>(null)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, goToQuestionnaire = false) => {
     e.preventDefault()
+    setSavingType(goToQuestionnaire ? 'questionnaire' : 'save')
     try {
-      await addClient.mutateAsync({
+      const result = await addClient.mutateAsync({
         name: formData.name,
         partner_name: formData.partner_name || undefined,
         phone: formData.phone || undefined,
         email: formData.email || undefined,
         event_date: formData.event_date || undefined,
         venue_name: formData.venue_name || undefined,
+        total_amount: formData.total_amount ? parseFloat(formData.total_amount) : undefined,
         status: 'active',
       })
       toast.success('הלקוח נוסף בהצלחה!')
       setFormData({ name: '', partner_name: '', phone: '', email: '', event_date: '', venue_name: '', total_amount: '' })
       onClose()
+      
+      if (goToQuestionnaire && result?.id) {
+        router.push(`/dashboard/clients/${result.id}?tab=questionnaire`)
+      }
     } catch {
       toast.error('שגיאה בהוספת לקוח')
+    } finally {
+      setSavingType(null)
     }
   }
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="לקוח חדש">
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={(e) => handleSubmit(e, false)}>
         <div style={{ display: 'grid', gap: '16px' }}>
           <FormField label="שם הלקוח" value={formData.name} onChange={(v) => setFormData({ ...formData, name: v })} required />
           <FormField label="שם בן/בת הזוג" value={formData.partner_name} onChange={(v) => setFormData({ ...formData, partner_name: v })} />
@@ -260,17 +270,217 @@ function AddClientModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
             <FormField label="אימייל" type="email" value={formData.email} onChange={(v) => setFormData({ ...formData, email: v })} dir="ltr" />
           </FormGrid>
           <FormGrid columns={2}>
-            <FormField label="תאריך אירוע" type="date" value={formData.event_date} onChange={(v) => setFormData({ ...formData, event_date: v })} />
+            <DatePickerField 
+              label="תאריך אירוע" 
+              value={formData.event_date} 
+              onChange={(v) => setFormData({ ...formData, event_date: v })} 
+            />
             <FormField label="סכום עסקה" type="number" value={formData.total_amount} onChange={(v) => setFormData({ ...formData, total_amount: v })} placeholder="₪" />
           </FormGrid>
           <FormField label="מיקום האירוע" value={formData.venue_name} onChange={(v) => setFormData({ ...formData, venue_name: v })} />
         </div>
-        <FormActions>
-          <Button type="submit" loading={addClient.isPending}>שמור לקוח</Button>
+        <div style={{ display: 'flex', gap: '12px', marginTop: '24px', flexWrap: 'wrap' }}>
+          <Button type="submit" loading={savingType === 'save'}>שמור לקוח</Button>
+          <Button 
+            type="button" 
+            variant="secondary"
+            loading={savingType === 'questionnaire'}
+            onClick={(e) => handleSubmit(e as any, true)}
+            disabled={!formData.name}
+          >
+            שמור והמשך לשאלון
+          </Button>
           <Button type="button" variant="secondary" onClick={onClose}>ביטול</Button>
-        </FormActions>
+        </div>
       </form>
     </Modal>
+  )
+}
+
+// Custom Date Picker with better UX
+function DatePickerField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false)
+  
+  // Parse current value
+  const currentDate = value ? new Date(value) : null
+  const [selectedYear, setSelectedYear] = useState(currentDate?.getFullYear() || new Date().getFullYear())
+  const [selectedMonth, setSelectedMonth] = useState(currentDate?.getMonth() || new Date().getMonth())
+  
+  const months = [
+    'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+    'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
+  ]
+  
+  const years = Array.from({ length: 16 }, (_, i) => 2020 + i) // 2020-2035
+  
+  const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate()
+  const firstDayOfMonth = new Date(selectedYear, selectedMonth, 1).getDay()
+  
+  const handleDayClick = (day: number) => {
+    const dateStr = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    onChange(dateStr)
+    setIsOpen(false)
+  }
+  
+  const formatDisplayDate = (dateStr: string) => {
+    if (!dateStr) return ''
+    const d = new Date(dateStr)
+    return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
+        {label}
+      </label>
+      <input
+        type="text"
+        value={formatDisplayDate(value)}
+        onClick={() => setIsOpen(!isOpen)}
+        readOnly
+        placeholder="בחר תאריך"
+        style={{
+          width: '100%',
+          padding: '12px 14px',
+          borderRadius: '10px',
+          border: '1px solid #e9eef4',
+          fontSize: '14px',
+          background: '#fff',
+          cursor: 'pointer',
+        }}
+      />
+      
+      {isOpen && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          right: 0,
+          marginTop: '4px',
+          background: '#fff',
+          borderRadius: '12px',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
+          border: '1px solid #e9eef4',
+          padding: '16px',
+          zIndex: 1000,
+          minWidth: '280px',
+        }}>
+          {/* Month/Year selectors */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <select
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(Number(e.target.value))}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '8px',
+                border: '1px solid #e9eef4',
+                fontSize: '14px',
+              }}
+            >
+              {months.map((m, i) => (
+                <option key={i} value={i}>{m}</option>
+              ))}
+            </select>
+            <select
+              value={selectedYear}
+              onChange={e => setSelectedYear(Number(e.target.value))}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: '1px solid #e9eef4',
+                fontSize: '14px',
+              }}
+            >
+              {years.map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Day headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '8px' }}>
+            {['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'].map(d => (
+              <div key={d} style={{ textAlign: 'center', fontSize: '12px', color: '#94a3b8', padding: '4px' }}>
+                {d}
+              </div>
+            ))}
+          </div>
+          
+          {/* Days grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+            {/* Empty cells for first week */}
+            {Array.from({ length: firstDayOfMonth }, (_, i) => (
+              <div key={`empty-${i}`} style={{ padding: '8px' }} />
+            ))}
+            
+            {/* Day cells */}
+            {Array.from({ length: daysInMonth }, (_, i) => {
+              const day = i + 1
+              const isSelected = currentDate && 
+                currentDate.getDate() === day && 
+                currentDate.getMonth() === selectedMonth && 
+                currentDate.getFullYear() === selectedYear
+              
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => handleDayClick(day)}
+                  style={{
+                    padding: '8px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: isSelected ? '#0ea5e9' : 'transparent',
+                    color: isSelected ? '#fff' : '#0f172a',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                  }}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+          
+          {/* Quick actions */}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                onChange('')
+                setIsOpen(false)
+              }}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '8px',
+                border: '1px solid #e9eef4',
+                background: '#fff',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              נקה
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '8px',
+                border: 'none',
+                background: '#f1f5f9',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              סגור
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

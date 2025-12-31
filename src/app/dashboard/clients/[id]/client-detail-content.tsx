@@ -445,8 +445,8 @@ export default function ClientDetailContent({ client: initialClient, payments: i
             </div>
           )}
 
-          {/* Questionnaire */}
-          <QuestionnaireSection clientId={client.id} />
+          {/* Questionnaire Button */}
+          <QuestionnaireButton clientId={client.id} />
         </div>
 
         {/* Right Column - Financial Summary */}
@@ -1058,8 +1058,9 @@ function InputField({ label, value, onChange, type = 'text', required = false, p
   )
 }
 
-// Questionnaire Section Component
-function QuestionnaireSection({ clientId }: { clientId: string }) {
+// Questionnaire Button Component - Opens modal with full questionnaire
+function QuestionnaireButton({ clientId }: { clientId: string }) {
+  const [isOpen, setIsOpen] = useState(false)
   const [questions, setQuestions] = useState<{
     id: string
     question: string
@@ -1069,7 +1070,7 @@ function QuestionnaireSection({ clientId }: { clientId: string }) {
   }[]>([])
   const [answers, setAnswers] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [answeredCount, setAnsweredCount] = useState(0)
 
   useEffect(() => {
     const loadData = async () => {
@@ -1096,8 +1097,11 @@ function QuestionnaireSection({ clientId }: { clientId: string }) {
       
       if (answersData) {
         const answersMap = new Map<string, string>()
-        answersData.forEach(a => answersMap.set(a.question_id, a.answer))
+        answersData.forEach(a => {
+          if (a.answer) answersMap.set(a.question_id, a.answer)
+        })
         setAnswers(answersMap)
+        setAnsweredCount(answersMap.size)
       }
 
       setLoading(false)
@@ -1107,8 +1111,13 @@ function QuestionnaireSection({ clientId }: { clientId: string }) {
 
   const handleAnswerChange = async (questionId: string, answer: string) => {
     const newAnswers = new Map(answers)
-    newAnswers.set(questionId, answer)
+    if (answer) {
+      newAnswers.set(questionId, answer)
+    } else {
+      newAnswers.delete(questionId)
+    }
     setAnswers(newAnswers)
+    setAnsweredCount(newAnswers.size)
 
     // Auto-save
     const supabase = createClient()
@@ -1133,11 +1142,10 @@ function QuestionnaireSection({ clientId }: { clientId: string }) {
         background: '#fff',
         borderRadius: '16px',
         border: '1px solid #e9eef4',
-        padding: '32px',
+        padding: '20px',
         textAlign: 'center',
-        color: '#94a3b8',
       }}>
-        <Loader2 className="animate-spin" size={24} style={{ margin: '0 auto' }} />
+        <Loader2 className="animate-spin" size={20} style={{ color: '#94a3b8' }} />
       </div>
     )
   }
@@ -1161,88 +1169,212 @@ function QuestionnaireSection({ clientId }: { clientId: string }) {
   }
 
   return (
-    <div style={{
-      background: '#fff',
-      borderRadius: '16px',
-      border: '1px solid #e9eef4',
-      overflow: 'hidden',
-    }}>
+    <>
       <div style={{
-        padding: '16px 20px',
-        borderBottom: '1px solid #f1f5f9',
+        background: '#fff',
+        borderRadius: '16px',
+        border: '1px solid #e9eef4',
+        padding: '20px',
       }}>
-        <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#0f172a', margin: 0 }}>
-          שאלון
-        </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#0f172a', margin: '0 0 4px 0' }}>
+              שאלון
+            </h3>
+            <p style={{ fontSize: '13px', color: '#94a3b8', margin: 0 }}>
+              {answeredCount} מתוך {questions.length} שאלות נענו
+            </p>
+          </div>
+          <button
+            onClick={() => setIsOpen(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 20px',
+              borderRadius: '10px',
+              background: '#0ea5e9',
+              color: '#fff',
+              border: 'none',
+              fontSize: '14px',
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            <Mail size={18} />
+            פתח שאלון
+          </button>
+        </div>
+        
+        {/* Progress bar */}
+        <div style={{ marginTop: '16px' }}>
+          <div style={{
+            height: '6px',
+            background: '#f1f5f9',
+            borderRadius: '3px',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%',
+              width: `${(answeredCount / questions.length) * 100}%`,
+              background: answeredCount === questions.length ? '#10b981' : '#0ea5e9',
+              borderRadius: '3px',
+              transition: 'width 0.3s',
+            }} />
+          </div>
+        </div>
       </div>
-      
-      <div style={{ padding: '20px' }}>
-        {questions.map((q, index) => (
-          <div key={q.id} style={{ marginBottom: index < questions.length - 1 ? '20px' : 0 }}>
-            <label style={{ 
-              display: 'block', 
-              fontSize: '13px', 
-              fontWeight: 500, 
-              color: '#0f172a', 
-              marginBottom: '8px' 
+
+      {/* Modal */}
+      {isOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: '20px',
+        }}>
+          <div style={{
+            background: '#fff',
+            borderRadius: '20px',
+            width: '100%',
+            maxWidth: '600px',
+            maxHeight: '90vh',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            {/* Header */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '20px 24px',
+              borderBottom: '1px solid #f1f5f9',
             }}>
-              {q.question}
-              {q.required && <span style={{ color: '#ef4444', marginRight: '4px' }}>*</span>}
-            </label>
-            
-            {q.type === 'text' && (
-              <input
-                type="text"
-                value={answers.get(q.id) || ''}
-                onChange={e => handleAnswerChange(q.id, e.target.value)}
+              <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#0f172a', margin: 0 }}>
+                שאלון לקוח
+              </h2>
+              <button
+                onClick={() => setIsOpen(false)}
                 style={{
-                  width: '100%',
-                  padding: '10px 12px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '8px',
                   borderRadius: '8px',
-                  border: '1px solid #e9eef4',
-                  fontSize: '14px',
-                }}
-              />
-            )}
-            
-            {q.type === 'textarea' && (
-              <textarea
-                value={answers.get(q.id) || ''}
-                onChange={e => handleAnswerChange(q.id, e.target.value)}
-                rows={3}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid #e9eef4',
-                  fontSize: '14px',
-                  resize: 'vertical',
-                }}
-              />
-            )}
-            
-            {q.type === 'select' && (
-              <select
-                value={answers.get(q.id) || ''}
-                onChange={e => handleAnswerChange(q.id, e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid #e9eef4',
-                  fontSize: '14px',
-                  background: '#fff',
+                  color: '#64748b',
                 }}
               >
-                <option value="">בחר...</option>
-                {q.options?.map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
-            )}
+                <X size={20} />
+              </button>
+            </div>
+            
+            {/* Content */}
+            <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
+              {questions.map((q, index) => (
+                <div key={q.id} style={{ marginBottom: index < questions.length - 1 ? '24px' : 0 }}>
+                  <label style={{ 
+                    display: 'block', 
+                    fontSize: '14px', 
+                    fontWeight: 500, 
+                    color: '#0f172a', 
+                    marginBottom: '8px' 
+                  }}>
+                    {index + 1}. {q.question}
+                    {q.required && <span style={{ color: '#ef4444', marginRight: '4px' }}>*</span>}
+                  </label>
+                  
+                  {q.type === 'text' && (
+                    <input
+                      type="text"
+                      value={answers.get(q.id) || ''}
+                      onChange={e => handleAnswerChange(q.id, e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '12px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid #e9eef4',
+                        fontSize: '14px',
+                      }}
+                    />
+                  )}
+                  
+                  {q.type === 'textarea' && (
+                    <textarea
+                      value={answers.get(q.id) || ''}
+                      onChange={e => handleAnswerChange(q.id, e.target.value)}
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: '12px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid #e9eef4',
+                        fontSize: '14px',
+                        resize: 'vertical',
+                      }}
+                    />
+                  )}
+                  
+                  {q.type === 'select' && (
+                    <select
+                      value={answers.get(q.id) || ''}
+                      onChange={e => handleAnswerChange(q.id, e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '12px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid #e9eef4',
+                        fontSize: '14px',
+                        background: '#fff',
+                      }}
+                    >
+                      <option value="">בחר...</option>
+                      {q.options?.map(opt => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              ))}
+            </div>
+            
+            {/* Footer */}
+            <div style={{
+              padding: '16px 24px',
+              borderTop: '1px solid #f1f5f9',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}>
+              <span style={{ fontSize: '13px', color: '#94a3b8' }}>
+                השינויים נשמרים אוטומטית
+              </span>
+              <button
+                onClick={() => setIsOpen(false)}
+                style={{
+                  padding: '10px 24px',
+                  borderRadius: '10px',
+                  background: '#0ea5e9',
+                  color: '#fff',
+                  border: 'none',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                סיום
+              </button>
+            </div>
           </div>
-        ))}
-      </div>
-    </div>
+        </div>
+      )}
+    </>
   )
 }
