@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { 
@@ -444,6 +444,9 @@ export default function ClientDetailContent({ client: initialClient, payments: i
               </p>
             </div>
           )}
+
+          {/* Questionnaire */}
+          <QuestionnaireSection clientId={client.id} />
         </div>
 
         {/* Right Column - Financial Summary */}
@@ -1039,6 +1042,8 @@ function InputField({ label, value, onChange, type = 'text', required = false, p
         onChange={e => onChange(e.target.value)}
         required={required}
         placeholder={placeholder}
+        min={type === 'date' ? '2020-01-01' : undefined}
+        max={type === 'date' ? '2035-12-31' : undefined}
         style={{
           width: '100%',
           padding: '10px 12px',
@@ -1049,6 +1054,195 @@ function InputField({ label, value, onChange, type = 'text', required = false, p
           textAlign: dir === 'ltr' ? 'left' : 'right',
         }}
       />
+    </div>
+  )
+}
+
+// Questionnaire Section Component
+function QuestionnaireSection({ clientId }: { clientId: string }) {
+  const [questions, setQuestions] = useState<{
+    id: string
+    question: string
+    type: 'text' | 'textarea' | 'select'
+    options?: string[]
+    required: boolean
+  }[]>([])
+  const [answers, setAnswers] = useState<Map<string, string>>(new Map())
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    const loadData = async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Load questions
+      const { data: questionsData } = await supabase
+        .from('questionnaire_questions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('order_num')
+      
+      if (questionsData) {
+        setQuestions(questionsData)
+      }
+
+      // Load answers
+      const { data: answersData } = await supabase
+        .from('questionnaire_answers')
+        .select('question_id, answer')
+        .eq('client_id', clientId)
+      
+      if (answersData) {
+        const answersMap = new Map<string, string>()
+        answersData.forEach(a => answersMap.set(a.question_id, a.answer))
+        setAnswers(answersMap)
+      }
+
+      setLoading(false)
+    }
+    loadData()
+  }, [clientId])
+
+  const handleAnswerChange = async (questionId: string, answer: string) => {
+    const newAnswers = new Map(answers)
+    newAnswers.set(questionId, answer)
+    setAnswers(newAnswers)
+
+    // Auto-save
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    await supabase
+      .from('questionnaire_answers')
+      .upsert({
+        client_id: clientId,
+        question_id: questionId,
+        answer: answer,
+        user_id: user.id,
+      }, {
+        onConflict: 'client_id,question_id',
+      })
+  }
+
+  if (loading) {
+    return (
+      <div style={{
+        background: '#fff',
+        borderRadius: '16px',
+        border: '1px solid #e9eef4',
+        padding: '32px',
+        textAlign: 'center',
+        color: '#94a3b8',
+      }}>
+        <Loader2 className="animate-spin" size={24} style={{ margin: '0 auto' }} />
+      </div>
+    )
+  }
+
+  if (questions.length === 0) {
+    return (
+      <div style={{
+        background: '#fff',
+        borderRadius: '16px',
+        border: '1px solid #e9eef4',
+        padding: '20px',
+      }}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#0f172a', margin: '0 0 12px 0' }}>
+          שאלון
+        </h3>
+        <p style={{ fontSize: '13px', color: '#94a3b8', margin: 0 }}>
+          לא הוגדרו שאלות עדיין. <Link href="/dashboard/settings" style={{ color: '#0ea5e9' }}>הגדר שאלות בהגדרות</Link>
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      background: '#fff',
+      borderRadius: '16px',
+      border: '1px solid #e9eef4',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '16px 20px',
+        borderBottom: '1px solid #f1f5f9',
+      }}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, color: '#0f172a', margin: 0 }}>
+          שאלון
+        </h3>
+      </div>
+      
+      <div style={{ padding: '20px' }}>
+        {questions.map((q, index) => (
+          <div key={q.id} style={{ marginBottom: index < questions.length - 1 ? '20px' : 0 }}>
+            <label style={{ 
+              display: 'block', 
+              fontSize: '13px', 
+              fontWeight: 500, 
+              color: '#0f172a', 
+              marginBottom: '8px' 
+            }}>
+              {q.question}
+              {q.required && <span style={{ color: '#ef4444', marginRight: '4px' }}>*</span>}
+            </label>
+            
+            {q.type === 'text' && (
+              <input
+                type="text"
+                value={answers.get(q.id) || ''}
+                onChange={e => handleAnswerChange(q.id, e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #e9eef4',
+                  fontSize: '14px',
+                }}
+              />
+            )}
+            
+            {q.type === 'textarea' && (
+              <textarea
+                value={answers.get(q.id) || ''}
+                onChange={e => handleAnswerChange(q.id, e.target.value)}
+                rows={3}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #e9eef4',
+                  fontSize: '14px',
+                  resize: 'vertical',
+                }}
+              />
+            )}
+            
+            {q.type === 'select' && (
+              <select
+                value={answers.get(q.id) || ''}
+                onChange={e => handleAnswerChange(q.id, e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #e9eef4',
+                  fontSize: '14px',
+                  background: '#fff',
+                }}
+              >
+                <option value="">בחר...</option>
+                {q.options?.map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

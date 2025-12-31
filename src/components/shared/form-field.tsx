@@ -90,6 +90,8 @@ export function FormField(props: FormFieldProps) {
         required={required}
         disabled={disabled}
         dir={dir}
+        min={type === 'date' ? '2020-01-01' : undefined}
+        max={type === 'date' ? '2035-12-31' : undefined}
         className={`form-input ${error ? 'has-error' : ''} ${icon ? 'has-icon' : ''}`}
         style={{
           paddingRight: icon && dir === 'rtl' ? '44px' : undefined,

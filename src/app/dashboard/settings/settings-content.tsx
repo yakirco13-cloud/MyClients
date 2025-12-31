@@ -59,6 +59,7 @@ export default function SettingsContent({ user, settings: initialSettings }: Pro
     { id: 'business', label: 'פרטי העסק', icon: Building },
     { id: 'connections', label: 'חיבורים', icon: Link2 },
     { id: 'categories', label: 'קטגוריות שירים', icon: Music },
+    { id: 'questionnaire', label: 'שאלון לקוחות', icon: Mail },
     { id: 'account', label: 'חשבון', icon: User },
     { id: 'notifications', label: 'התראות', icon: Bell },
   ]
@@ -145,6 +146,123 @@ export default function SettingsContent({ user, settings: initialSettings }: Pro
     } catch (error) {
       toast.error('שגיאה במחיקה')
     }
+  }
+
+  // Questionnaire
+  type Question = {
+    id: string
+    question: string
+    type: 'text' | 'textarea' | 'select'
+    options?: string[]
+    order_num: number
+    required: boolean
+  }
+  
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [newQuestion, setNewQuestion] = useState('')
+  const [newQuestionType, setNewQuestionType] = useState<'text' | 'textarea' | 'select'>('text')
+  const [newQuestionOptions, setNewQuestionOptions] = useState('')
+  const [newQuestionRequired, setNewQuestionRequired] = useState(false)
+  const [loadingQuestions, setLoadingQuestions] = useState(false)
+
+  // Load questions on mount
+  useEffect(() => {
+    const loadQuestions = async () => {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('questionnaire_questions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('order_num')
+      
+      if (data) setQuestions(data)
+    }
+    loadQuestions()
+  }, [user.id])
+
+  const handleAddQuestion = async () => {
+    if (!newQuestion.trim()) return
+    
+    setLoadingQuestions(true)
+    try {
+      const supabase = createClient()
+      const questionData: {
+        user_id: string
+        question: string
+        type: string
+        order_num: number
+        required: boolean
+        options?: string[]
+      } = {
+        user_id: user.id,
+        question: newQuestion.trim(),
+        type: newQuestionType,
+        order_num: questions.length,
+        required: newQuestionRequired,
+      }
+      
+      if (newQuestionType === 'select' && newQuestionOptions.trim()) {
+        questionData.options = newQuestionOptions.split(',').map(o => o.trim()).filter(o => o)
+      }
+      
+      const { data, error } = await supabase
+        .from('questionnaire_questions')
+        .insert(questionData)
+        .select()
+        .single()
+      
+      if (error) throw error
+      
+      if (data) {
+        setQuestions([...questions, data])
+        setNewQuestion('')
+        setNewQuestionOptions('')
+        setNewQuestionRequired(false)
+        toast.success('שאלה נוספה')
+      }
+    } catch (error) {
+      console.error('Error adding question:', error)
+      toast.error('שגיאה בהוספת שאלה')
+    } finally {
+      setLoadingQuestions(false)
+    }
+  }
+
+  const handleDeleteQuestion = async (id: string) => {
+    if (!confirm('למחוק שאלה זו?')) return
+    
+    try {
+      const supabase = createClient()
+      await supabase.from('questionnaire_questions').delete().eq('id', id)
+      setQuestions(questions.filter(q => q.id !== id))
+      toast.success('שאלה נמחקה')
+    } catch (error) {
+      toast.error('שגיאה במחיקה')
+    }
+  }
+
+  const moveQuestion = async (id: string, direction: 'up' | 'down') => {
+    const index = questions.findIndex(q => q.id === id)
+    if (index === -1) return
+    if (direction === 'up' && index === 0) return
+    if (direction === 'down' && index === questions.length - 1) return
+    
+    const newIndex = direction === 'up' ? index - 1 : index + 1
+    const newQuestions = [...questions]
+    const [removed] = newQuestions.splice(index, 1)
+    newQuestions.splice(newIndex, 0, removed)
+    
+    // Update order_num for all questions
+    const supabase = createClient()
+    for (let i = 0; i < newQuestions.length; i++) {
+      newQuestions[i].order_num = i
+      await supabase
+        .from('questionnaire_questions')
+        .update({ order_num: i })
+        .eq('id', newQuestions[i].id)
+    }
+    
+    setQuestions(newQuestions)
   }
 
   const handleSaveBusiness = async () => {
@@ -534,6 +652,229 @@ export default function SettingsContent({ user, settings: initialSettings }: Pro
               <p style={{ fontSize: '13px', color: '#0369a1', margin: 0 }}>
                 💡 קטגוריות מאפשרות לך לארגן שירים בפגישות עם לקוחות. 
                 בייצוא ל-Rekordbox, כל קטגוריה תיצור תיקייה נפרדת.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Questionnaire */}
+        {activeTab === 'questionnaire' && (
+          <div style={{
+            background: '#fff',
+            borderRadius: '16px',
+            border: '1px solid #e9eef4',
+            padding: '32px',
+          }}>
+            <h2 style={{ fontSize: '20px', fontWeight: 600, color: '#0f172a', marginBottom: '8px' }}>
+              שאלון לקוחות
+            </h2>
+            <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '28px' }}>
+              הגדר שאלות שיוצגו בכרטיס הלקוח. התשובות יישמרו עבור כל לקוח בנפרד.
+            </p>
+
+            {/* Add new question */}
+            <div style={{ 
+              marginBottom: '24px',
+              maxWidth: '600px',
+              padding: '20px',
+              background: '#f8fafc',
+              borderRadius: '12px',
+            }}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
+                  שאלה חדשה
+                </label>
+                <input
+                  type="text"
+                  placeholder="הקלד שאלה..."
+                  value={newQuestion}
+                  onChange={e => setNewQuestion(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px 14px',
+                    borderRadius: '10px',
+                    border: '1px solid #e9eef4',
+                    fontSize: '14px',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+              
+              <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
+                    סוג תשובה
+                  </label>
+                  <select
+                    value={newQuestionType}
+                    onChange={e => setNewQuestionType(e.target.value as 'text' | 'textarea' | 'select')}
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid #e9eef4',
+                      fontSize: '14px',
+                      background: '#fff',
+                    }}
+                  >
+                    <option value="text">טקסט קצר</option>
+                    <option value="textarea">טקסט ארוך</option>
+                    <option value="select">בחירה מרשימה</option>
+                  </select>
+                </div>
+                
+                {newQuestionType === 'select' && (
+                  <div style={{ flex: 1, minWidth: '200px' }}>
+                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
+                      אפשרויות (מופרדות בפסיק)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="אפשרות 1, אפשרות 2, אפשרות 3"
+                      value={newQuestionOptions}
+                      onChange={e => setNewQuestionOptions(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid #e9eef4',
+                        fontSize: '14px',
+                      }}
+                    />
+                  </div>
+                )}
+                
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={newQuestionRequired}
+                    onChange={e => setNewQuestionRequired(e.target.checked)}
+                    style={{ width: '18px', height: '18px' }}
+                  />
+                  <span style={{ fontSize: '14px', color: '#64748b' }}>חובה</span>
+                </label>
+                
+                <button
+                  onClick={handleAddQuestion}
+                  disabled={loadingQuestions || !newQuestion.trim()}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '10px 20px',
+                    background: '#0ea5e9',
+                    border: 'none',
+                    borderRadius: '10px',
+                    color: '#fff',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    opacity: loadingQuestions || !newQuestion.trim() ? 0.5 : 1,
+                  }}
+                >
+                  <Plus size={18} />
+                  הוסף
+                </button>
+              </div>
+            </div>
+
+            {/* Questions list */}
+            <div style={{ maxWidth: '600px' }}>
+              {questions.length === 0 ? (
+                <div style={{ 
+                  padding: '40px', 
+                  textAlign: 'center', 
+                  color: '#94a3b8',
+                  background: '#f8fafc',
+                  borderRadius: '12px',
+                }}>
+                  אין שאלות עדיין. הוסף שאלה ראשונה!
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {questions.map((question, index) => (
+                    <div
+                      key={question.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        padding: '14px 16px',
+                        background: '#f8fafc',
+                        borderRadius: '10px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <button
+                          onClick={() => moveQuestion(question.id, 'up')}
+                          disabled={index === 0}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: '2px',
+                            cursor: index === 0 ? 'default' : 'pointer',
+                            opacity: index === 0 ? 0.3 : 1,
+                            color: '#64748b',
+                          }}
+                        >
+                          <ChevronUp size={16} />
+                        </button>
+                        <button
+                          onClick={() => moveQuestion(question.id, 'down')}
+                          disabled={index === questions.length - 1}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: '2px',
+                            cursor: index === questions.length - 1 ? 'default' : 'pointer',
+                            opacity: index === questions.length - 1 ? 0.3 : 1,
+                            color: '#64748b',
+                          }}
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                      </div>
+                      
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '14px', fontWeight: 500, color: '#0f172a' }}>
+                          {question.question}
+                          {question.required && <span style={{ color: '#ef4444', marginRight: '4px' }}>*</span>}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
+                          {question.type === 'text' && 'טקסט קצר'}
+                          {question.type === 'textarea' && 'טקסט ארוך'}
+                          {question.type === 'select' && `בחירה: ${question.options?.join(', ')}`}
+                        </div>
+                      </div>
+                      
+                      <button
+                        onClick={() => handleDeleteQuestion(question.id)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#ef4444',
+                          cursor: 'pointer',
+                          padding: '8px',
+                        }}
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* Info */}
+            <div style={{
+              marginTop: '24px',
+              padding: '16px',
+              background: '#f0f9ff',
+              borderRadius: '10px',
+              border: '1px solid #bae6fd',
+              maxWidth: '600px',
+            }}>
+              <p style={{ fontSize: '13px', color: '#0369a1', margin: 0 }}>
+                💡 השאלות יופיעו בכרטיס הלקוח תחת לשונית &quot;שאלון&quot;. 
+                תוכל למלא את התשובות בכל פגישה עם הלקוח.
               </p>
             </div>
           </div>
