@@ -186,6 +186,16 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       const ratingStr = track.getAttribute('Rating')
       const rating = ratingStr ? parseInt(ratingStr) : null
 
+      // Get and decode location
+      let location = track.getAttribute('Location') || null
+      if (location) {
+        try {
+          location = decodeURIComponent(location).replace(/^file:\/\/localhost\//, '')
+        } catch (e) {
+          // Keep as-is
+        }
+      }
+
       // Format duration
       const formatDuration = (secs: number) => {
         const mins = Math.floor(secs / 60)
@@ -204,6 +214,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
         rating: rating && rating > 0 ? rating : null,
         date_added: track.getAttribute('DateAdded') || null,
         rekordbox_id: track.getAttribute('TrackID') || null,
+        location,
       })
     })
 

@@ -12,6 +12,7 @@ type SongInput = {
   rating: number | null
   date_added: string | null
   rekordbox_id: string | null
+  location: string | null
 }
 
 export async function POST(request: NextRequest) {
