@@ -160,6 +160,7 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       rating: number | null
       date_added: string | null
       rekordbox_id: string | null
+      location: string | null
     }
     
     // Use Map to deduplicate by TITLE ONLY
@@ -236,7 +237,11 @@ export default function SongsContent({ songs: initialSongs, totalCount: initialC
       
       setImportProgress('מנתח שירים...')
       const parsedSongs = parseXMLInBrowser(text)
-      console.log(`Parsed ${parsedSongs.length} songs from XML`)
+      const songsWithLocation = parsedSongs.filter(s => s.location).length
+      console.log(`Parsed ${parsedSongs.length} songs from XML, ${songsWithLocation} with location`)
+      if (parsedSongs.length > 0) {
+        console.log('First song:', JSON.stringify(parsedSongs[0]))
+      }
       
       if (parsedSongs.length === 0) {
         throw new Error('לא נמצאו שירים בקובץ')
