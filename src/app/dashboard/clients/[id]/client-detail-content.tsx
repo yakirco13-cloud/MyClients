@@ -694,7 +694,7 @@ function EditClientModal({ client, onClose, onSave }: {
               <InputField label="אימייל" value={formData.email} onChange={v => setFormData({...formData, email: v})} type="email" dir="ltr" />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <InputField label="תאריך אירוע" value={formData.event_date} onChange={v => setFormData({...formData, event_date: v})} type="date" />
+              <DatePickerField label="תאריך אירוע" value={formData.event_date} onChange={v => setFormData({...formData, event_date: v})} />
               <InputField label="מיקום" value={formData.venue_name} onChange={v => setFormData({...formData, venue_name: v})} />
             </div>
             <div>
@@ -1376,5 +1376,192 @@ function QuestionnaireButton({ clientId }: { clientId: string }) {
         </div>
       )}
     </>
+  )
+}
+
+// Custom Date Picker with better UX
+function DatePickerField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false)
+  
+  // Parse current value
+  const currentDate = value ? new Date(value) : null
+  const [selectedYear, setSelectedYear] = useState(currentDate?.getFullYear() || new Date().getFullYear())
+  const [selectedMonth, setSelectedMonth] = useState(currentDate?.getMonth() || new Date().getMonth())
+  
+  const months = [
+    'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+    'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'
+  ]
+  
+  const years = Array.from({ length: 16 }, (_, i) => 2020 + i) // 2020-2035
+  
+  const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate()
+  const firstDayOfMonth = new Date(selectedYear, selectedMonth, 1).getDay()
+  
+  const handleDayClick = (day: number) => {
+    const dateStr = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    onChange(dateStr)
+    setIsOpen(false)
+  }
+  
+  const formatDisplayDate = (dateStr: string) => {
+    if (!dateStr) return ''
+    const d = new Date(dateStr)
+    return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, color: '#64748b', marginBottom: '6px' }}>
+        {label}
+      </label>
+      <input
+        type="text"
+        value={formatDisplayDate(value)}
+        onClick={() => setIsOpen(!isOpen)}
+        readOnly
+        placeholder="בחר תאריך"
+        style={{
+          width: '100%',
+          padding: '10px 12px',
+          borderRadius: '8px',
+          border: '1px solid #e9eef4',
+          fontSize: '13px',
+          background: '#fff',
+          cursor: 'pointer',
+        }}
+      />
+      
+      {isOpen && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          right: 0,
+          marginTop: '4px',
+          background: '#fff',
+          borderRadius: '12px',
+          boxShadow: '0 10px 40px rgba(0,0,0,0.15)',
+          border: '1px solid #e9eef4',
+          padding: '16px',
+          zIndex: 1000,
+          minWidth: '280px',
+        }}>
+          {/* Month/Year selectors */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <select
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(Number(e.target.value))}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '8px',
+                border: '1px solid #e9eef4',
+                fontSize: '14px',
+              }}
+            >
+              {months.map((m, i) => (
+                <option key={i} value={i}>{m}</option>
+              ))}
+            </select>
+            <select
+              value={selectedYear}
+              onChange={e => setSelectedYear(Number(e.target.value))}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: '1px solid #e9eef4',
+                fontSize: '14px',
+              }}
+            >
+              {years.map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Day headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '8px' }}>
+            {['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'].map(d => (
+              <div key={d} style={{ textAlign: 'center', fontSize: '12px', color: '#94a3b8', padding: '4px' }}>
+                {d}
+              </div>
+            ))}
+          </div>
+          
+          {/* Days grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+            {/* Empty cells for first week */}
+            {Array.from({ length: firstDayOfMonth }, (_, i) => (
+              <div key={`empty-${i}`} style={{ padding: '8px' }} />
+            ))}
+            
+            {/* Day cells */}
+            {Array.from({ length: daysInMonth }, (_, i) => {
+              const day = i + 1
+              const isSelected = currentDate && 
+                currentDate.getDate() === day && 
+                currentDate.getMonth() === selectedMonth && 
+                currentDate.getFullYear() === selectedYear
+              
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => handleDayClick(day)}
+                  style={{
+                    padding: '8px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: isSelected ? '#0ea5e9' : 'transparent',
+                    color: isSelected ? '#fff' : '#0f172a',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                  }}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+          
+          {/* Quick actions */}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                onChange('')
+                setIsOpen(false)
+              }}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '8px',
+                border: '1px solid #e9eef4',
+                background: '#fff',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              נקה
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              style={{
+                flex: 1,
+                padding: '8px',
+                borderRadius: '8px',
+                border: 'none',
+                background: '#f1f5f9',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              סגור
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
