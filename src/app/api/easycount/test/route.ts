@@ -27,22 +27,15 @@ export async function POST(request: NextRequest) {
     const baseUrl = useSandbox ? EASYCOUNT_DEMO_API : EASYCOUNT_API
     console.log('Using URL:', baseUrl)
 
-    // Test by creating a price quote (type 10)
+    // Test using getDocList - just checks auth without creating anything
     const payload = {
       api_key: apiKey,
       developer_email: developerEmail,
-      type: 10,
-      customer_name: 'בדיקת חיבור',
-      item: [{
-        details: 'בדיקה',
-        amount: 1,
-        price: 1,
-      }],
     }
 
-    console.log('Sending payload:', JSON.stringify(payload, null, 2))
+    console.log('Testing auth with getDocList')
 
-    const response = await fetch(`${baseUrl}/createDoc`, {
+    const response = await fetch(`${baseUrl}/getDocList`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -58,22 +51,12 @@ export async function POST(request: NextRequest) {
           data.errMsg?.includes('api key') ||
           data.errMsg?.includes('API KEY') ||
           data.errMsg?.includes('unauthorized') ||
-          data.errMsg?.includes('Autherization')) {
+          data.errMsg?.includes('Autherization') ||
+          data.errNum === 100) {
         return NextResponse.json({
           success: false,
           error: 'מפתח API או אימייל מפתח שגויים',
         })
-      }
-
-      // These errors mean auth PASSED but something else failed
-      // Document type doesn't exist = auth worked, type not supported
-      // Missing fields = auth worked, validation failed
-      if (data.errMsg?.includes("document type") ||
-          data.errMsg?.includes("doesn't exist") ||
-          data.errMsg?.includes('חסר') || 
-          data.errMsg?.includes('missing')) {
-        console.log('Auth successful - document type not supported in sandbox')
-        return NextResponse.json({ success: true })
       }
 
       return NextResponse.json({
@@ -82,7 +65,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Success!
+    // Success - got document list (even if empty)
     return NextResponse.json({ success: true })
 
   } catch (error) {

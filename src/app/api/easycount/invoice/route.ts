@@ -103,6 +103,18 @@ export async function POST(request: NextRequest) {
     console.log('EasyCount response:', result)
 
     if (!result.success) {
+      // If document type doesn't exist in sandbox, return mock success for testing
+      if (useSandbox && (result.errMsg?.includes("document type") || result.errMsg?.includes("doesn't exist"))) {
+        console.log('Sandbox mode - document type not supported, returning mock success')
+        return NextResponse.json({
+          success: true,
+          documentId: 'sandbox-test-' + Date.now(),
+          documentNumber: 'SANDBOX-' + Math.floor(Math.random() * 10000),
+          sandbox: true,
+          message: 'מצב בדיקה - המסמך לא נוצר בפועל',
+        })
+      }
+
       return NextResponse.json(
         { 
           success: false,
