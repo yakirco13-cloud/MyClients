@@ -47,7 +47,7 @@ export default function ExpensesContent() {
   })
 
   const categories = [...new Set(expenses.map(e => e.category).filter(Boolean))]
-  const stats = { total: expenses.length, synced: expenses.filter(e => e.green_invoice_synced).length, monthTotal }
+  const stats = { total: expenses.length, synced: expenses.filter(e => e.synced_at).length, monthTotal }
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -134,7 +134,7 @@ export default function ExpensesContent() {
     { key: 'date', header: 'תאריך', width: '1fr', render: (expense) => <span style={{ color: '#64748b' }}>{new Date(expense.expense_date).toLocaleDateString('he-IL')}</span> },
     {
       key: 'status', header: 'סטטוס', width: '100px',
-      render: (expense) => expense.green_invoice_synced ? (
+      render: (expense) => expense.synced_at ? (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '6px', background: '#ecfdf5', color: '#10b981', fontSize: '12px', fontWeight: 500 }}>
           <Cloud size={14} /> מסונכרן
         </span>

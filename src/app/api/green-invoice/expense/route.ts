@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
     await supabase
       .from('expenses')
       .update({
-        green_invoice_synced: true,
+        synced_at: new Date().toISOString(),
         green_invoice_id: result.id,
       })
       .eq('id', expenseId)

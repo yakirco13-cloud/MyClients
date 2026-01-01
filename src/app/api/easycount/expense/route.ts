@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       useSandbox 
     } = body
 
-    console.log('EasyCount expense sync:', { expenseId, vendorName, amount, useSandbox })
+    console.log('EasyCount expense sync:', { expenseId, vendorName, amount })
 
     if (!expenseId || !vendorName || !amount) {
       return NextResponse.json(
@@ -42,13 +42,12 @@ export async function POST(request: NextRequest) {
     const dateObj = expenseDate ? new Date(expenseDate) : new Date()
     const formattedDate = `${dateObj.getDate().toString().padStart(2, '0')}/${(dateObj.getMonth() + 1).toString().padStart(2, '0')}/${dateObj.getFullYear()}`
 
-    // Create expense document
-    // type 320 = חשבונית מס (Tax Invoice) - commonly available
-    // type 400 = קבלה (Receipt) - most commonly available
+    // Create expense as חשבונית עסקה (type 300)
+    // Note: This appears in "מסמכים שיצרתי" not "הוצאות" - EasyCount limitation
     const expensePayload = {
       api_key: apiKey,
       developer_email: developerEmail,
-      type: 320, // חשבונית מס - more likely to be available
+      type: 300, // חשבונית עסקה
       
       customer_name: vendorName,
       customer_crn: vendorTaxId || undefined,
@@ -60,7 +59,7 @@ export async function POST(request: NextRequest) {
       }],
       
       payment: [{
-        payment_type: 1, // Cash
+        payment_type: 1,
         payment_sum: amount,
         date: formattedDate,
       }],
@@ -81,34 +80,6 @@ export async function POST(request: NextRequest) {
     console.log('EasyCount response:', result)
 
     if (!result.success) {
-      // If document type doesn't exist in sandbox, still mark as synced for testing
-      if (useSandbox && (result.errMsg?.includes("document type") || result.errMsg?.includes("doesn't exist"))) {
-        console.log('Sandbox mode - document type not supported, marking as synced anyway')
-        
-        const supabase = await createClient()
-        const { error } = await supabase
-          .from('expenses')
-          .update({
-            green_invoice_synced: true,
-            green_invoice_id: 'sandbox-test',
-          })
-          .eq('id', expenseId)
-
-        if (error) {
-          console.error('Failed to update expense in sandbox mode:', error)
-          return NextResponse.json(
-            { error: 'שגיאה בעדכון ההוצאה' },
-            { status: 500 }
-          )
-        }
-
-        return NextResponse.json({
-          success: true,
-          message: 'מצב בדיקה - סומן כסונכרן',
-          sandbox: true,
-        })
-      }
-
       return NextResponse.json(
         { 
           success: false,
@@ -121,21 +92,13 @@ export async function POST(request: NextRequest) {
 
     // Update expense in Supabase
     const supabase = await createClient()
-    const { error } = await supabase
+    await supabase
       .from('expenses')
       .update({
-        green_invoice_synced: true,
+        synced_at: new Date().toISOString(),
         green_invoice_id: result.doc_uuid || result.doc_number,
       })
       .eq('id', expenseId)
-
-    if (error) {
-      console.error('Failed to update expense:', error)
-      return NextResponse.json(
-        { error: 'שגיאה בעדכון ההוצאה' },
-        { status: 500 }
-      )
-    }
 
     return NextResponse.json({
       success: true,

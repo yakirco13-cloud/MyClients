@@ -13,7 +13,7 @@ export type Expense = {
   category?: string
   description?: string
   receipt_url?: string
-  green_invoice_synced?: boolean
+  synced_at?: string
   created_at: string
 }
 
